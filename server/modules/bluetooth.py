@@ -21,7 +21,7 @@ def _vendor(mac):
 
 
 def scan(seconds=12):
-    _sh("btmgmt power on", timeout=6)
+    _sh("hciconfig hci0 up", timeout=6)  # garante radio up (sem travar como btmgmt power on)
     out = _sh(f"timeout {seconds + 3} btmgmt --timeout {seconds} find",
               timeout=seconds + 10).stdout
     devs = {}
