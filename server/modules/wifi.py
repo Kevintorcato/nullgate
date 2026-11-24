@@ -63,6 +63,23 @@ def _set_managed(iface):
     _sh(f"ip link set {iface} up")
 
 
+def _cleanup_iface(iface):
+    """Mata capturas/ataques orfaos e devolve a interface ao modo managed.
+    Chamado antes de scan/recon/captura e no stop, pra nunca deixar a placa presa."""
+    _sh("pkill -9 hcxdumptool 2>/dev/null; pkill -9 aireplay-ng 2>/dev/null; "
+        "pkill -9 airodump-ng 2>/dev/null; pkill -9 wash 2>/dev/null", timeout=10)
+    _capture["proc"] = None
+    time.sleep(0.4)
+    _set_managed(iface)
+
+
+def reset_radio(iface=None):
+    """Botao de panico: desemperra a placa."""
+    iface = _pick(iface)
+    _cleanup_iface(iface)
+    return {"ok": True, "msg": f"{iface} resetada (managed)"}
+
+
 def _own_essid(essid):
     """Heuristica: marca redes do dono (WR / loja). Ajustavel."""
     e = (essid or "").lower()
@@ -73,6 +90,7 @@ def scan(seconds=12, iface=None):
     iface = _pick(iface)
     if not _radio_present(iface):
         return {"ok": False, "error": f"interface {iface} ausente."}
+    _cleanup_iface(iface)  # desemperra se ficou algo preso
     for f in glob.glob(f"{WORK}/scan-*.csv"):
         try:
             os.remove(f)
@@ -192,6 +210,7 @@ def recon(essid, bssids, channels, iface=None):
     if not _radio_present(iface):
         return {"ok": False, "error": f"interface {iface} ausente."}
     chans = [str(c) for c in (channels or [])] or ["1", "6", "11"]
+    _cleanup_iface(iface)
     for f in glob.glob(f"{WORK}/recon-*"):
         try:
             os.remove(f)
@@ -306,7 +325,8 @@ def capture_start(bssids, channels, iface=None, mode="ativo", essid=None):
         os.remove(cap)
     except OSError:
         pass
-    _set_managed(iface)
+    _cleanup_iface(iface)       # mata captura/ataque orfao antes de iniciar
+    _last_hs.update(ts=0, n=0)  # zera o cache de contagem
     cmd = ["hcxdumptool", "-i", iface, "-w", cap, f"--bpf={bpf}", "-c", chans, "--rds=1"]
     if mode == "passivo":
         # nao envia deauth/disassoc (so escuta)
@@ -396,17 +416,26 @@ def capture_status():
     }
 
 
-def _count_handshakes(cap):
+_last_hs = {"ts": 0, "n": 0}
+
+
+def _count_handshakes(cap, force=False):
+    # throttle: converter o pcapng inteiro a cada 3s pesa no Card; so reconta a cada 8s
+    now = time.time()
+    if not force and now - _last_hs["ts"] < 8:
+        return _last_hs["n"]
     tmp = f"{WORK}/_probe.hc22000"
     try:
         os.remove(tmp)
     except OSError:
         pass
-    _sh(f"hcxpcapngtool -o {tmp} {cap}", timeout=30)
+    _sh(f"hcxpcapngtool -o {tmp} {cap} 2>/dev/null", timeout=30)
+    n = 0
     if os.path.exists(tmp):
         with open(tmp) as f:
-            return sum(1 for _ in f)
-    return 0
+            n = sum(1 for _ in f)
+    _last_hs.update(ts=now, n=n)
+    return n
 
 
 def capture_stop():
@@ -414,12 +443,22 @@ def capture_stop():
     if proc and proc.poll() is None:
         try:
             os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            for _ in range(10):
+                if proc.poll() is not None:
+                    break
+                time.sleep(0.2)
+            if proc.poll() is None:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
         except Exception:
-            proc.terminate()
-    _set_managed(_capture.get("iface") or DEFAULT_RADIO)
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    iface = _capture.get("iface") or DEFAULT_RADIO
+    _cleanup_iface(iface)  # mata orfaos + volta pra managed (desemperra)
     cap = f"{WORK}/capture.pcapng"
-    hs = _count_handshakes(cap) if os.path.exists(cap) else 0
-    return {"ok": True, "msg": "captura parada", "handshakes": hs}
+    hs = _count_handshakes(cap, force=True) if os.path.exists(cap) else 0
+    return {"ok": True, "msg": "captura parada", "handshakes": hs, "iface": iface}
 
 
 def export_hc22000():

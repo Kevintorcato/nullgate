@@ -8,7 +8,7 @@ const esc = (s) => (s || "").toString().replace(/[&<>"]/g,
   (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[m]));
 
 const ICON = { wifi: "📶", bt: "🔵", cpu: "🖥️", network: "🌐", config: "⚙️", info: "ℹ️", files: "📁" };
-let CAT = null, SCAN = [], CURRENT = "wifi", capTimer = null, feedTimer = null;
+let CAT = null, SCAN = [], CURRENT = "wifi", capTimer = null, feedTimer = null, capturing = false;
 let IFACES = [], IFACE = localStorage.getItem("ng_iface") || "wlan1";
 
 const THEMES = [
@@ -115,6 +115,7 @@ function go(sec) {
   CURRENT = sec;
   $("#tabs").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.sec === sec));
   if (capTimer) { clearInterval(capTimer); capTimer = null; } if (feedTimer) { clearInterval(feedTimer); feedTimer = null; }
+  if (capturing) { capturing = false; post("/api/wifi/capture/stop").catch(() => {}); }  // nao deixa a placa presa
   ({ wifi: viewWifi, bt: viewBt, rede: viewRede, files: viewFiles, sistema: viewSystem, config: viewConfig }[sec] || viewWifi)();
 }
 
@@ -325,6 +326,7 @@ function viewCapture(net, mode) {
     feed.appendChild(d); while (feed.children.length > 18) feed.removeChild(feed.firstChild);
     feed.scrollTop = feed.scrollHeight;
   }, 220);
+  capturing = true;
   capTimer = setInterval(pollCapture, 3000); pollCapture();
 }
 async function pollCapture() {
@@ -338,6 +340,7 @@ async function pollCapture() {
   if (!s.rodando && capTimer) { clearInterval(capTimer); capTimer = null; }
 }
 async function stopCapture() {
+  capturing = false;
   if (capTimer) { clearInterval(capTimer); capTimer = null; } if (feedTimer) { clearInterval(feedTimer); feedTimer = null; }
   const r = await post("/api/wifi/capture/stop");
   toast(r.handshakes ? `parado · ${r.handshakes} handshake(s)` : "parado · sem handshake");
@@ -460,6 +463,8 @@ async function viewConfig() {
     <div class="card"><h3>Interface de ataque (padrão)</h3>
       ${ifaceBar()}
       <div class="muted" style="margin-top:6px">Usada no scan e captura. A wlan0 é a interna (conexão); o adaptador USB é o rádio.</div>
+      <button class="btn danger" id="btnReset" style="margin-top:10px">🛟 Resetar rádio (destravar)</button>
+      <div class="muted" id="resetOut" style="margin-top:6px">Se a placa travar em modo monitor, isso mata tudo e volta ao normal.</div>
     </div>
     <div class="card"><h3>Hotspot</h3>
       <div class="kv"><span class="k">Status</span><span class="v">
@@ -479,6 +484,12 @@ async function viewConfig() {
       <div id="hsOut"></div>
     </div>`;
   bindIface();
+  $("#btnReset").onclick = async () => {
+    $("#resetOut").textContent = "resetando…";
+    const r = await post("/api/wifi/reset", { iface: IFACE });
+    $("#resetOut").textContent = r.ok ? "✅ " + r.msg : (r.error || "falha");
+    toast("rádio resetado");
+  };
   $("#themeSel").onchange = (e) => { applyTheme(e.target.value); toast("tema: " + e.target.value); };
   $("#bgUp").onclick = async () => {
     const f = $("#bgFile").files[0];

@@ -180,6 +180,11 @@ def wifi_capture_stop():
     return jsonify(m_wifi.capture_stop())
 
 
+@app.route("/api/wifi/reset", methods=["POST"])
+def wifi_reset():
+    return jsonify(m_wifi.reset_radio((request.json or {}).get("iface")))
+
+
 @app.route("/api/wifi/export")
 def wifi_export():
     return jsonify(m_wifi.export_hc22000())
