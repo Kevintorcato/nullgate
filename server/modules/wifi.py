@@ -112,11 +112,11 @@ def _own_essid(essid):
     return any(k in e for k in ["wr_", "wr ", "lk_", "iot", "supermerc", "wr-"])
 
 
-def scan(seconds=12, iface=None):
+def scan(seconds=12, iface=None, _retry=True):
     iface = _pick(iface)
     if not _radio_present(iface):
         return {"ok": False, "error": f"interface {iface} ausente."}
-    _cleanup_iface(iface)  # desemperra se ficou algo preso
+    _cleanup_iface(iface)  # mata orfaos
     for f in glob.glob(f"{WORK}/scan-*.csv"):
         try:
             os.remove(f)
@@ -134,7 +134,12 @@ def scan(seconds=12, iface=None):
         )
     finally:
         _set_managed(iface)
-    return {"ok": True, "iface": iface, "networks": _parse_scan()}
+    nets = _parse_scan()
+    # 0 redes quase sempre = adaptador rtl8xxxu travado. Re-energiza e tenta 1x.
+    if not nets and _retry:
+        _usb_reset(iface)
+        return scan(seconds, iface, _retry=False)
+    return {"ok": True, "iface": iface, "networks": nets, "recuperado": not _retry}
 
 
 def _parse_scan():
