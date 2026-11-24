@@ -1,6 +1,6 @@
 {
   "app": "Nullgate",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "sections": [
     {
       "id": "wifi",
@@ -46,6 +46,15 @@
           "cmd": "ping -c 4 -W 2 {alvo}",
           "campos": [
             {"nome": "alvo", "label": "Host", "placeholder": "10.6.1.1"}
+          ]
+        },
+        {
+          "id": "adb_scan",
+          "nome": "Scan ADB (5555)",
+          "desc": "Acha aparelhos com ADB aberto na rede (Android/tablets)",
+          "cmd": "nmap -p 5555 --open -T4 {alvo}",
+          "campos": [
+            {"nome": "alvo", "label": "Faixa da rede", "placeholder": "10.6.1.0/24"}
           ]
         }
       ]

@@ -14,6 +14,7 @@ from flask import Flask, jsonify, request, send_from_directory
 from modules import system as m_system
 from modules import wifi as m_wifi
 from modules import hotspot as m_hotspot
+from modules import bluetooth as m_bt
 
 BASE = Path(__file__).resolve().parent
 WEB = BASE.parent / "web"
@@ -70,6 +71,18 @@ def bg_clear():
     for f in BG_DIR.glob("bg.*"):
         f.unlink()
     return jsonify({"ok": True})
+
+
+# ---------- bluetooth ----------
+@app.route("/api/bt/scan", methods=["POST"])
+def bt_scan():
+    d = request.json or {}
+    return jsonify(m_bt.scan(seconds=int(d.get("seconds", 12))))
+
+
+@app.route("/api/bt/info", methods=["POST"])
+def bt_info():
+    return jsonify(m_bt.info((request.json or {}).get("mac")))
 
 
 # ---------- sistema / info ----------

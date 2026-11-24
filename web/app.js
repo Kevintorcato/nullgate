@@ -7,7 +7,7 @@ const post = (path, body) =>
 const esc = (s) => (s || "").toString().replace(/[&<>"]/g,
   (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[m]));
 
-const ICON = { wifi: "📶", cpu: "🖥️", network: "🌐", config: "⚙️", info: "ℹ️", files: "📁" };
+const ICON = { wifi: "📶", bt: "🔵", cpu: "🖥️", network: "🌐", config: "⚙️", info: "ℹ️", files: "📁" };
 let CAT = null, SCAN = [], CURRENT = "wifi", capTimer = null, feedTimer = null;
 let IFACES = [], IFACE = localStorage.getItem("ng_iface") || "wlan1";
 
@@ -82,6 +82,7 @@ async function boot() {
   await loadIfaces();
   const secs = [
     { id: "wifi", title: "WiFi", icon: "wifi" },
+    { id: "bt", title: "Bluetooth", icon: "bt" },
     { id: "rede", title: "Rede", icon: "network" },
     { id: "files", title: "Arquivos", icon: "files" },
     { id: "sistema", title: "Sistema", icon: "cpu" },
@@ -114,7 +115,7 @@ function go(sec) {
   CURRENT = sec;
   $("#tabs").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.sec === sec));
   if (capTimer) { clearInterval(capTimer); capTimer = null; } if (feedTimer) { clearInterval(feedTimer); feedTimer = null; }
-  ({ wifi: viewWifi, rede: viewRede, files: viewFiles, sistema: viewSystem, config: viewConfig }[sec] || viewWifi)();
+  ({ wifi: viewWifi, bt: viewBt, rede: viewRede, files: viewFiles, sistema: viewSystem, config: viewConfig }[sec] || viewWifi)();
 }
 
 /* ---------------- WiFi ---------------- */
@@ -354,6 +355,57 @@ async function doExport() {
     <div class="kv"><span class="k">Handshakes</span><span class="v">${r.linhas}</span></div>
     <div class="muted" style="margin-top:8px">${esc(r.dica)}</div></div>`;
   toast("baixado — joga na GPU");
+}
+
+/* ---------------- Bluetooth ---------------- */
+let BT = [];
+function viewBt() {
+  $("#view").innerHTML = `
+    <div class="warn">⚠️ Scan/recon de dispositivos. Sem spam de BLE (não mexe com aparelho de terceiros).</div>
+    <button class="btn" id="btnBt">Escanear Bluetooth</button>
+    <div id="btList" class="menu"></div>`;
+  $("#btnBt").onclick = doBtScan;
+  if (BT.length) renderBt();
+}
+async function doBtScan() {
+  const fx = fxRun("BLUETOOTH SCAN", 13000, [
+    "ligando rádio BT…", "discovery BR/EDR + LE…",
+    "ouvindo advertisements…", "lendo RSSI…", "resolvendo nomes…", "identificando fabricantes…"]);
+  const r = await post("/api/bt/scan", { seconds: 12 });
+  if (!r.ok) { fx.fail(r.error || "falha"); return; }
+  BT = r.dispositivos || [];
+  fx.done(BT.length + " dispositivos");
+  setTimeout(renderBt, 680);
+}
+function renderBt() {
+  const el = $("#btList");
+  if (!BT.length) { el.innerHTML = `<div class="empty">nenhum dispositivo</div>`; return; }
+  el.innerHTML = BT.map((d, i) => `
+    <div class="item" data-i="${i}">
+      <div class="it-main">
+        <div class="it-t">${esc(d.nome || "(sem nome)")} ${d.fabricante ? '<span class="tag">'+esc(d.fabricante)+'</span>' : ""}</div>
+        <div class="it-s">${esc(d.mac)} · ${esc(d.tipo)} · ${d.rssi} dBm</div>
+      </div><div class="chev">info ›</div>
+    </div>`).join("");
+  el.querySelectorAll(".item").forEach((it) => it.onclick = () => btInfo(BT[it.dataset.i]));
+}
+async function btInfo(d) {
+  const fx = fxRun("RECON · " + (d.nome || d.mac), 4000, [
+    "conectando SDP/GATT…", "enumerando serviços…", "lendo características…"]);
+  const r = await post("/api/bt/info", { mac: d.mac });
+  fx.done(r.ok ? "ok" : "falha");
+  setTimeout(() => {
+    const kv = (k, v) => v ? `<div class="kv"><span class="k">${k}</span><span class="v">${esc(v)}</span></div>` : "";
+    $("#view").innerHTML = `
+      <button class="btn sec" onclick="go('bt')" style="margin-bottom:10px">‹ voltar</button>
+      <div class="card"><h3>${esc(d.nome || d.mac)}</h3>
+        ${kv("MAC", r.mac)} ${kv("Nome", r.name)} ${kv("Classe", r.class)}
+        ${kv("Tipo", d.tipo)} ${kv("Sinal", d.rssi + " dBm")}
+        ${kv("Pareado", r.paired)} ${kv("Conectado", r.connected)}
+        <div class="kv"><span class="k">Serviços</span><span class="v">${(r.servicos || []).length}</span></div>
+      </div>
+      ${(r.servicos || []).length ? `<div class="card"><h3>Serviços (UUIDs)</h3><pre>${esc((r.servicos||[]).join("\n"))}</pre></div>` : ""}`;
+  }, 680);
 }
 
 /* ---------------- Rede (catálogo) ---------------- */
