@@ -1,0 +1,54 @@
+{
+  "app": "Nullgate",
+  "version": "0.1.0",
+  "sections": [
+    {
+      "id": "wifi",
+      "title": "WiFi",
+      "icon": "wifi",
+      "kind": "builtin",
+      "note": "Scan, captura de handshake e export. Audite apenas redes suas."
+    },
+    {
+      "id": "sistema",
+      "title": "Sistema",
+      "icon": "cpu",
+      "kind": "builtin"
+    },
+    {
+      "id": "rede",
+      "title": "Rede",
+      "icon": "network",
+      "kind": "actions",
+      "actions": [
+        {
+          "id": "nmap_quick",
+          "nome": "Nmap quick scan",
+          "desc": "Varredura rapida de portas num alvo",
+          "cmd": "nmap -T4 -F {alvo}",
+          "campos": [
+            {"nome": "alvo", "label": "IP ou faixa", "placeholder": "10.6.1.0/24"}
+          ]
+        },
+        {
+          "id": "hosts_lan",
+          "nome": "Hosts na LAN",
+          "desc": "Descobre aparelhos na rede",
+          "cmd": "nmap -sn {alvo}",
+          "campos": [
+            {"nome": "alvo", "label": "Faixa", "placeholder": "10.6.1.0/24"}
+          ]
+        },
+        {
+          "id": "ping",
+          "nome": "Ping",
+          "desc": "Testa se um host responde",
+          "cmd": "ping -c 4 -W 2 {alvo}",
+          "campos": [
+            {"nome": "alvo", "label": "Host", "placeholder": "10.6.1.1"}
+          ]
+        }
+      ]
+    }
+  ]
+}
