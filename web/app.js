@@ -384,7 +384,7 @@ function renderBt() {
     <div class="item" data-i="${i}">
       <div class="it-main">
         <div class="it-t">${esc(d.nome || "(sem nome)")} ${d.fabricante ? '<span class="tag">'+esc(d.fabricante)+'</span>' : ""}</div>
-        <div class="it-s">${esc(d.mac)} · ${esc(d.tipo)} · ${d.rssi} dBm</div>
+        <div class="it-s">${esc(d.mac)} · ${esc(d.tipo)}${d.rssi != null ? " · " + d.rssi + " dBm" : ""}</div>
       </div><div class="chev">info ›</div>
     </div>`).join("");
   el.querySelectorAll(".item").forEach((it) => it.onclick = () => btInfo(BT[it.dataset.i]));
