@@ -35,6 +35,29 @@ html.hasbg .card,html.hasbg .item{background:rgba(10,14,20,.80);
   backdrop-filter:blur(3px)}
 html.hasbg header,html.hasbg nav#tabs{background:rgba(8,11,16,.88)}
 
+/* ===== FX hacker (console correndo + barra) ===== */
+.fx{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;
+  background:rgba(0,4,2,.82);backdrop-filter:blur(2px);padding:18px}
+.fx-box{width:100%;max-width:440px;background:#020803;border:1px solid var(--acc);
+  border-radius:12px;box-shadow:0 0 24px rgba(54,226,160,.35),inset 0 0 30px rgba(54,226,160,.06);
+  padding:14px;font-family:ui-monospace,"Courier New",monospace}
+.fx-title{color:var(--acc);font-size:14px;font-weight:700;letter-spacing:1px;
+  text-shadow:0 0 8px var(--acc);margin-bottom:10px;text-transform:uppercase}
+.fx-title .cur{animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+.fx-con{height:190px;overflow:hidden;font-size:11px;line-height:1.45;color:#2fbf72;
+  border-top:1px solid #0c3; border-bottom:1px solid #0c3;padding:6px 0;margin-bottom:10px}
+.fxl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:.75}
+.fxl.ok{color:var(--acc);opacity:1;text-shadow:0 0 6px var(--acc)}
+.fxl.done{color:#fff;opacity:1;font-weight:700}
+.fxl.err{color:var(--warn);opacity:1}
+.fx-bar{height:10px;background:#031a0e;border:1px solid #0c3;border-radius:6px;overflow:hidden}
+.fx-bar > i{display:block;height:100%;width:0;border-radius:6px;
+  background:linear-gradient(90deg,var(--acc2),var(--acc));
+  box-shadow:0 0 12px var(--acc);transition:width .2s}
+.fx-pct{text-align:right;color:var(--acc);font-size:12px;margin-top:6px;
+  text-shadow:0 0 6px var(--acc)}
+
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;background:var(--bg);color:var(--fg);
   font:15px/1.5 ui-sans-serif,system-ui,"Segoe UI",Roboto,sans-serif}

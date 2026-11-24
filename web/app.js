@@ -8,7 +8,7 @@ const esc = (s) => (s || "").toString().replace(/[&<>"]/g,
   (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[m]));
 
 const ICON = { wifi: "📶", cpu: "🖥️", network: "🌐", config: "⚙️", info: "ℹ️", files: "📁" };
-let CAT = null, SCAN = [], CURRENT = "wifi", capTimer = null;
+let CAT = null, SCAN = [], CURRENT = "wifi", capTimer = null, feedTimer = null;
 let IFACES = [], IFACE = localStorage.getItem("ng_iface") || "wlan1";
 
 const THEMES = [
@@ -36,6 +36,45 @@ loadBg();
 
 function toast(m){const t=$("#toast");t.textContent=m;t.classList.add("show");
   setTimeout(()=>t.classList.remove("show"),2300);}
+
+/* ===== FX hacker ===== */
+const HX = "0123456789abcdef";
+const rnd = (a, b) => Math.floor(Math.random() * (b - a + 1)) + a;
+const pick = (a) => a[rnd(0, a.length - 1)];
+const hx = (n) => Array.from({ length: n }, () => HX[rnd(0, 15)]).join("");
+const rmac = () => Array.from({ length: 6 }, () => hx(2)).join(":");
+function fxGarbage() {
+  const kind = pick(["BEACON", "PROBE-REQ", "PROBE-RSP", "EAPOL", "AUTH", "ASSOC", "DATA", "QOS", "RTS/CTS", "DEAUTH"]);
+  return `[0x${hx(4)}] ${rmac()} ch${rnd(1, 11)} ${rnd(-92, -38)}dBm  ${kind}  seq=${rnd(0, 4095)}`;
+}
+function fxRun(title, estMs, feed) {
+  const ov = document.createElement("div"); ov.className = "fx";
+  ov.innerHTML = `<div class="fx-box">
+    <div class="fx-title">${esc(title)}<span class="cur">█</span></div>
+    <div class="fx-con" id="fxcon"></div>
+    <div class="fx-bar"><i id="fxbar"></i></div>
+    <div class="fx-pct" id="fxpct">0%</div></div>`;
+  document.body.appendChild(ov);
+  const con = ov.querySelector("#fxcon"), bar = ov.querySelector("#fxbar"), pct = ov.querySelector("#fxpct");
+  const push = (txt, cls) => { const d = document.createElement("div");
+    d.className = "fxl " + (cls || ""); d.textContent = txt; con.appendChild(d);
+    while (con.children.length > 40) con.removeChild(con.firstChild);
+    con.scrollTop = con.scrollHeight; };
+  const f = (feed || []).slice(); let fi = 0; const t0 = Date.now();
+  const tick = setInterval(() => {
+    const p = Math.min(96, ((Date.now() - t0) / estMs) * 100);
+    bar.style.width = p + "%"; pct.textContent = Math.floor(p) + "%";
+    if (fi < f.length && Math.random() < 0.45) push("» " + f[fi++], "ok");
+    push(fxGarbage()); if (Math.random() < 0.5) push(fxGarbage());
+  }, 85);
+  return {
+    done: (msg) => { clearInterval(tick); bar.style.width = "100%"; pct.textContent = "100%";
+      push("✔ " + (msg || "concluído"), "done");
+      setTimeout(() => ov.remove(), 650); },
+    fail: (msg) => { clearInterval(tick); push("�‼ " + (msg || "erro"), "err");
+      setTimeout(() => ov.remove(), 1100); },
+  };
+}
 
 async function boot() {
   CAT = await api("/api/catalog");
@@ -74,7 +113,7 @@ function bindIface() {
 function go(sec) {
   CURRENT = sec;
   $("#tabs").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.sec === sec));
-  if (capTimer) { clearInterval(capTimer); capTimer = null; }
+  if (capTimer) { clearInterval(capTimer); capTimer = null; } if (feedTimer) { clearInterval(feedTimer); feedTimer = null; }
   ({ wifi: viewWifi, rede: viewRede, files: viewFiles, sistema: viewSystem, config: viewConfig }[sec] || viewWifi)();
 }
 
@@ -94,12 +133,15 @@ function viewWifi() {
   if (SCAN.length) renderScan();
 }
 async function doScan() {
-  const b = $("#btnScan");
-  b.disabled = true; b.innerHTML = `<span class="spin"></span>Escaneando ~12s…`;
+  const fx = fxRun("SCAN 2.4GHz · " + IFACE, 12500, [
+    "levantando rádio " + IFACE + "…", "modo monitor: ON",
+    "pulando canais 1→13…", "capturando beacons…",
+    "coletando probe requests…", "mapeando BSSIDs…", "agrupando ESSIDs…"]);
   const r = await post("/api/wifi/scan", { seconds: 12, iface: IFACE });
-  b.disabled = false; b.textContent = "Escanear de novo";
-  if (!r.ok) { toast(r.error || "falha"); return; }
-  SCAN = r.networks || []; renderScan();
+  if (!r.ok) { fx.fail(r.error || "falha no scan"); return; }
+  SCAN = r.networks || [];
+  fx.done(SCAN.length + " redes encontradas");
+  setTimeout(renderScan, 680);
 }
 function renderScan() {
   const el = $("#scanList");
@@ -150,12 +192,15 @@ async function deauthNet(net) {
   const ch = (net.canais || [])[0] || "";
   const bssid = (net.aps || net.bssids || [])[0];
   if (!bssid) { toast("sem BSSID"); return; }
-  toast("derrubando clientes ~10s…");
+  const fx = fxRun("DEAUTH · " + bssid, 10500, [
+    "travando canal " + (ch || "?") + "…", "montando quadros 802.11 deauth…",
+    "alvo: " + bssid, "injetando broadcast…", "derrubando clientes…",
+    "aguardando reconexão…"]);
   const r = await post("/api/wifi/deauth", { bssid, channel: Number(ch) || null, iface: IFACE, seconds: 10 });
-  $("#analyzeOut").innerHTML = r.ok
-    ? `📡 deauth enviado (${r.pacotes || 0} pacotes). Agora rode <b>Capturar</b> — os clientes vão reconectar.`
-    : (r.error || "falha");
-  toast(r.ok ? "deauth feito" : (r.error || "falha"));
+  if (!r.ok) { fx.fail(r.error || "falha"); return; }
+  fx.done((r.pacotes || 0) + " pacotes enviados");
+  setTimeout(() => { $("#analyzeOut").innerHTML =
+    `📡 deauth enviado. Agora rode <b>Capturar</b> — os clientes vão reconectar e soltar o handshake.`; }, 680);
 }
 function reconRows(r) {
   return `
@@ -165,18 +210,22 @@ function reconRows(r) {
     <div class="kv"><span class="k">Captura viável</span><span class="v">${r.captura_viavel ? "✅ sim" : "⚠️ sem cliente"}</span></div>`;
 }
 async function analyzeNet(net) {
-  const b = $("#btnAnalyze");
-  b.disabled = true; b.innerHTML = `<span class="spin"></span>Analisando ~20s…`;
-  $("#analyzeOut").textContent = "scan focado + checando WPS…";
+  const fx = fxRun("RECON · " + (net.essid || ""), 21000, [
+    "fixando canal " + ((net.canais || [])[0] || "?") + "…",
+    "sniffando quadros de gestão…", "lendo RSN/cifra…",
+    "sondando WPS (wash)…", "enumerando clientes…",
+    "avaliando vetor de ataque…"]);
   const r = await post("/api/wifi/recon", {
     essid: net.essid, bssids: net.aps || net.bssids,
     channels: (net.canais || []).map(Number).filter(Boolean), iface: IFACE });
-  b.disabled = false; b.textContent = "Analisar de novo";
-  if (!r.ok) { $("#analyzeOut").textContent = r.error || "falha"; return; }
-  $("#reconExtra").innerHTML = reconRows(r);
-  $("#analyzeOut").innerHTML = "✅ salvo. " + (r.wps === "aberto"
-    ? "<b style='color:var(--warn)'>WPS aberto — vulnerável!</b>"
-    : (r.captura_viavel ? "pronto pra capturar handshake." : "sem cliente agora; tente mais tarde."));
+  if (!r.ok) { fx.fail(r.error || "falha"); return; }
+  fx.done(r.wps === "aberto" ? "WPS ABERTO detectado!" : (r.seguranca || "ok"));
+  setTimeout(() => {
+    $("#reconExtra").innerHTML = reconRows(r);
+    $("#analyzeOut").innerHTML = r.wps === "aberto"
+      ? "<b style='color:var(--warn)'>WPS aberto — vulnerável!</b>"
+      : (r.captura_viavel ? "✅ pronto pra capturar handshake." : "⚠️ sem cliente agora; tente mais tarde.");
+  }, 680);
   toast("análise salva");
 }
 
@@ -220,6 +269,7 @@ function viewCapture(net, mode) {
       <div class="kv"><span class="k">Capturado</span><span class="v" id="cB">0 KB</span></div>
       <div class="kv"><span class="k">Handshakes</span><span class="v" id="cH">0</span></div>
       <div class="muted" id="cHint" style="margin-top:8px">Aguardando um aparelho reconectar…</div>
+      <div class="fx-con" id="capFeed" style="height:120px;margin-top:10px"></div>
       <div class="row" style="margin-top:12px">
         <button class="btn danger" id="btnStop">Parar</button>
         <button class="btn" id="btnExport" disabled>Exportar</button>
@@ -227,6 +277,12 @@ function viewCapture(net, mode) {
     </div><div id="exportBox"></div>`;
   $("#btnStop").onclick = stopCapture;
   $("#btnExport").onclick = doExport;
+  const feed = $("#capFeed");
+  feedTimer = setInterval(() => {
+    const d = document.createElement("div"); d.className = "fxl"; d.textContent = fxGarbage();
+    feed.appendChild(d); while (feed.children.length > 18) feed.removeChild(feed.firstChild);
+    feed.scrollTop = feed.scrollHeight;
+  }, 220);
   capTimer = setInterval(pollCapture, 3000); pollCapture();
 }
 async function pollCapture() {
@@ -240,7 +296,7 @@ async function pollCapture() {
   if (!s.rodando && capTimer) { clearInterval(capTimer); capTimer = null; }
 }
 async function stopCapture() {
-  if (capTimer) { clearInterval(capTimer); capTimer = null; }
+  if (capTimer) { clearInterval(capTimer); capTimer = null; } if (feedTimer) { clearInterval(feedTimer); feedTimer = null; }
   const r = await post("/api/wifi/capture/stop");
   toast(r.handshakes ? `parado · ${r.handshakes} handshake(s)` : "parado · sem handshake");
   await pollCapture().catch(() => {});
