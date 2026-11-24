@@ -126,12 +126,20 @@ function viewWifi() {
     ${ifaceBar()}
     <div class="row">
       <button class="btn" id="btnScan">Escanear redes</button>
-      <button class="btn sec" id="btnSaved" style="max-width:40%">Salvas</button>
+      <button class="btn sec" id="btnSaved" style="max-width:30%">Salvas</button>
+      <button class="btn danger" id="btnResetW" style="max-width:30%" title="destravar adaptador">🛟 Reset</button>
     </div>
     <div id="scanList" class="menu"></div>`;
   bindIface();
   $("#btnScan").onclick = doScan;
   $("#btnSaved").onclick = viewSaved;
+  $("#btnResetW").onclick = async () => {
+    const fx = fxRun("RESET " + IFACE, 13000, [
+      "cortando energia do USB…", "aguardando reconexão…",
+      "re-energizando adaptador…", "voltando ao modo managed…"]);
+    const r = await post("/api/wifi/reset", { iface: IFACE });
+    r.ok ? fx.done(r.msg || "resetado") : fx.fail(r.error || "falha");
+  };
   if (SCAN.length) renderScan();
 }
 async function doScan() {
