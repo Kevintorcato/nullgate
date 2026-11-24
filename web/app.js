@@ -60,18 +60,29 @@ function fxRun(title, estMs, feed) {
     d.className = "fxl " + (cls || ""); d.textContent = txt; con.appendChild(d);
     while (con.children.length > 40) con.removeChild(con.firstChild);
     con.scrollTop = con.scrollHeight; };
-  const f = (feed || []).slice(); let fi = 0; const t0 = Date.now();
+  const f = (feed || []).slice(); let fi = 0, warned = false; const t0 = Date.now();
   const tick = setInterval(() => {
-    const p = Math.min(96, ((Date.now() - t0) / estMs) * 100);
+    const el = Date.now() - t0;
+    let p;
+    if (el < estMs) {
+      p = (el / estMs) * 96;
+    } else {
+      // passou do estimado: nao trava — sobe bem devagar e avisa que ta rodando
+      p = Math.min(99, 96 + (el - estMs) / 1000 * 0.35);
+      if (!warned && el > estMs + 1500) { push("» ainda processando… (adaptador lento, aguarde)", "ok"); warned = true; }
+    }
     bar.style.width = p + "%"; pct.textContent = Math.floor(p) + "%";
     if (fi < f.length && Math.random() < 0.45) push("» " + f[fi++], "ok");
     push(fxGarbage()); if (Math.random() < 0.5) push(fxGarbage());
   }, 85);
+  // limite de seguranca: nunca fica preso pra sempre
+  const safety = setTimeout(() => { clearInterval(tick);
+    push("‼ demorou demais — tenta o 🛟 Reset", "err"); setTimeout(() => ov.remove(), 1800); }, 80000);
   return {
-    done: (msg) => { clearInterval(tick); bar.style.width = "100%"; pct.textContent = "100%";
+    done: (msg) => { clearTimeout(safety); clearInterval(tick); bar.style.width = "100%"; pct.textContent = "100%";
       push("✔ " + (msg || "concluído"), "done");
       setTimeout(() => ov.remove(), 650); },
-    fail: (msg) => { clearInterval(tick); push("�‼ " + (msg || "erro"), "err");
+    fail: (msg) => { clearTimeout(safety); clearInterval(tick); push("‼ " + (msg || "erro"), "err");
       setTimeout(() => ov.remove(), 1100); },
   };
 }
@@ -134,7 +145,7 @@ function viewWifi() {
   $("#btnScan").onclick = doScan;
   $("#btnSaved").onclick = viewSaved;
   $("#btnResetW").onclick = async () => {
-    const fx = fxRun("RESET " + IFACE, 13000, [
+    const fx = fxRun("RESET " + IFACE, 16000, [
       "cortando energia do USB…", "aguardando reconexão…",
       "re-energizando adaptador…", "voltando ao modo managed…"]);
     const r = await post("/api/wifi/reset", { iface: IFACE });
