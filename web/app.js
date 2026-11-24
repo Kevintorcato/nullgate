@@ -461,7 +461,9 @@ function openAction(a) {
 async function viewConfig() {
   $("#view").innerHTML = `<div class="center"><span class="spin"></span>carregando…</div>`;
   const hs = await api("/api/hotspot/status");
-  const opts = IFACES.map((i) =>
+  // hotspot só em interface managed (wlan0); a wlan1 é blindada pro ataque
+  const hsIfaces = IFACES.filter((i) => i.nm !== false);
+  const opts = (hsIfaces.length ? hsIfaces : IFACES).map((i) =>
     `<option value="${i.nome}" ${i.nome === "wlan0" ? "selected" : ""}>${esc(i.nome)} · ${esc(i.papel || "")}</option>`).join("");
   const curTheme = localStorage.getItem("ng_theme") || "dark";
   const themeOpts = THEMES.map((t) =>
@@ -494,8 +496,11 @@ async function viewConfig() {
       <label>Nome da rede (SSID)</label>
       <input id="hsSsid" placeholder="Nullgate" value="${esc(hs.ssid || "Nullgate")}">
       <label>Senha (mín. 8)</label>
-      <input id="hsPass" placeholder="mínimo 8 caracteres">
-      <div class="warn" style="margin-top:10px">Criar hotspot na <b>wlan0</b> derruba a conexão atual do Card (normal em campo).</div>
+      <input id="hsPass" value="${esc(hs.senha || "")}" placeholder="mínimo 8 caracteres">
+      <div class="row" style="margin-top:8px">
+        <button class="btn sec" id="hsSave">Salvar</button>
+      </div>
+      <div class="warn" style="margin-top:10px">Ligar o hotspot na <b>wlan0</b> derruba a conexão atual do Card com a rede (normal em campo — o celular conecta no hotspot).</div>
       <div class="row" style="margin-top:10px">
         <button class="btn" id="hsOn">Criar / Ligar</button>
         <button class="btn danger" id="hsOff">Desligar</button>
@@ -522,6 +527,12 @@ async function viewConfig() {
   $("#bgClr").onclick = async () => {
     await post("/api/background/clear"); applyBg(null);
     $("#bgOut").textContent = "fundo removido"; toast("removido");
+  };
+  $("#hsSave").onclick = async () => {
+    const r = await post("/api/hotspot/config", {
+      iface: $("#hsIf").value, ssid: $("#hsSsid").value, password: $("#hsPass").value });
+    $("#hsOut").innerHTML = r.ok ? `<div class="okbox" style="margin-top:10px">✅ salvo (não ligado)</div>` : "";
+    toast("config salva");
   };
   $("#hsOn").onclick = async () => {
     const r = await post("/api/hotspot/start", {

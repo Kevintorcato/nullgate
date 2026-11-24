@@ -113,6 +113,16 @@ def hotspot_stop():
     return jsonify(m_hotspot.stop())
 
 
+@app.route("/api/hotspot/config", methods=["GET", "POST"])
+def hotspot_config():
+    if request.method == "POST":
+        d = request.json or {}
+        c = m_hotspot.save_cfg(ssid=d.get("ssid"), password=d.get("password"),
+                               iface=d.get("iface"))
+        return jsonify({"ok": True, **c})
+    return jsonify({"ok": True, **m_hotspot.load_cfg()})
+
+
 # ---------- WiFi ----------
 @app.route("/api/wifi/scan", methods=["POST"])
 def wifi_scan():
