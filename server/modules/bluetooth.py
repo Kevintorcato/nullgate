@@ -21,9 +21,10 @@ def _vendor(mac):
 
 
 def scan(seconds=12):
-    _sh("hciconfig hci0 up", timeout=6)   # garante radio up (sem travar como btmgmt power on)
-    _sh("btmgmt stop-find 2>&1", timeout=5)  # limpa discovery pendente (evita status Busy)
-    out = _sh(f"timeout {seconds + 3} btmgmt --timeout {seconds} find 2>&1",
+    _sh("hciconfig hci0 up </dev/null", timeout=6)  # radio up
+    # stop-find limpa discovery pendente (status Busy); </dev/null evita travar no stdin
+    _sh("timeout 4 btmgmt stop-find </dev/null 2>&1", timeout=7)
+    out = _sh(f"timeout {seconds + 3} btmgmt --timeout {seconds} find </dev/null 2>&1",
               timeout=seconds + 10).stdout
     devs = {}
     cur = None
