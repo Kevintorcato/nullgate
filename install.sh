@@ -30,6 +30,9 @@ cp "$DEST/nullgate.service" /etc/systemd/system/nullgate.service
 systemctl daemon-reload
 systemctl enable nullgate >/dev/null 2>&1 || true
 
+# 3b) comando 'nullgate' no PATH (menu de texto pra telinha/CLI do Zero)
+install -m 755 "$DEST/tools/nullgate-cli.py" /usr/local/bin/nullgate 2>/dev/null || true
+
 # 4) blindar a wlan1 (adaptador) do NetworkManager, se existir
 echo "[4/5] blindando wlan1..."
 mkdir -p /etc/NetworkManager/conf.d
