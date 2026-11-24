@@ -6,6 +6,7 @@ Auditoria das PROPRIAS redes. A UI exige confirmacao de autorizacao.
 """
 import csv
 import glob
+import json
 import os
 import re
 import signal
@@ -14,7 +15,14 @@ import time
 
 DEFAULT_RADIO = os.environ.get("NULLGATE_RADIO", "wlan1")  # placa de ataque padrao
 WORK = "/tmp/nullgate"
+DATA = "/opt/nullgate/data"
+STORE = f"{DATA}/networks.json"
 os.makedirs(WORK, exist_ok=True)
+try:
+    os.makedirs(DATA, exist_ok=True)
+except OSError:
+    DATA = WORK
+    STORE = f"{DATA}/networks.json"
 
 _capture = {"proc": None, "started": 0, "targets": [], "iface": None}
 
@@ -123,6 +131,130 @@ def _parse_scan():
         out.append(v)
     out.sort(key=lambda x: (not x["meu"], x["essid"]))
     return out
+
+
+# ---------------- store (salva recon por rede) ----------------
+def _load_store():
+    try:
+        with open(STORE) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_store(d):
+    try:
+        with open(STORE, "w") as f:
+            json.dump(d, f, ensure_ascii=False, indent=1)
+    except OSError:
+        pass
+
+
+def saved_networks():
+    d = _load_store()
+    out = list(d.values())
+    out.sort(key=lambda x: x.get("ts", 0), reverse=True)
+    return {"ok": True, "redes": out}
+
+
+def forget_network(essid):
+    d = _load_store()
+    d.pop(essid, None)
+    _save_store(d)
+    return {"ok": True}
+
+
+# ---------------- recon (analise focada da rede) ----------------
+def recon(essid, bssids, channels, iface=None):
+    iface = _pick(iface)
+    if not _radio_present(iface):
+        return {"ok": False, "error": f"interface {iface} ausente."}
+    chans = [str(c) for c in (channels or [])] or ["1", "6", "11"]
+    for f in glob.glob(f"{WORK}/recon-*"):
+        try:
+            os.remove(f)
+        except OSError:
+            pass
+    _set_monitor(iface)
+    try:
+        # airodump focado: cifra/auth + contagem de clientes
+        _sh(
+            f"timeout 12 airodump-ng {iface} -c {','.join(chans)} "
+            f"-w {WORK}/recon --output-format csv --write-interval 3 >/dev/null 2>&1",
+            timeout=20,
+        )
+        enc, clients = _parse_recon(bssids)
+        # wash: deteccao de WPS
+        wps = _wash(iface, chans[0], bssids)
+    finally:
+        _set_managed(iface)
+
+    result = {
+        "essid": essid,
+        "bssids": bssids,
+        "canais": chans,
+        "seguranca": enc.get("privacy", "?"),
+        "cifra": enc.get("cipher", "?"),
+        "auth": enc.get("auth", "?"),
+        "wps": wps,                       # "aberto" | "travado" | "nao" | "desconhecido"
+        "clientes": clients,
+        "captura_viavel": clients > 0 or enc.get("privacy", "").startswith("WPA"),
+        "ts": int(time.time()),
+    }
+    # salva
+    store = _load_store()
+    store[essid] = result
+    _save_store(store)
+    return {"ok": True, **result}
+
+
+def _parse_recon(bssids):
+    files = sorted(glob.glob(f"{WORK}/recon-*.csv"))
+    enc = {}
+    clients = 0
+    targets = {b.lower() for b in bssids}
+    if not files:
+        return enc, clients
+    with open(files[-1], errors="replace") as fh:
+        rows = list(csv.reader(fh))
+    in_stations = False
+    for r in rows:
+        if r and "Station MAC" in r[0]:
+            in_stations = True
+            continue
+        if not r or len(r) < 6:
+            continue
+        if not in_stations and ":" in r[0] and r[0].strip().lower() in targets:
+            enc = {
+                "privacy": r[5].strip(),
+                "cipher": r[6].strip() if len(r) > 6 else "",
+                "auth": r[7].strip() if len(r) > 7 else "",
+            }
+        elif in_stations and len(r) > 5 and r[5].strip().lower() in targets:
+            clients += 1
+    return enc, clients
+
+
+def _wash(iface, channel, bssids):
+    if not _which("wash"):
+        return "desconhecido"
+    out = _sh(f"timeout 10 wash -i {iface} -c {channel} 2>/dev/null", timeout=16).stdout
+    targets = {b.lower() for b in bssids}
+    for line in out.splitlines():
+        parts = line.split()
+        if parts and ":" in parts[0] and parts[0].lower() in targets:
+            locked = "yes" in line.lower() and "lock" in line.lower()
+            # heuristica: coluna Lck costuma ser "Yes"/"No"
+            low = line.lower()
+            if " yes" in low:
+                return "travado"
+            return "aberto"
+    return "nao"
+
+
+def _which(prog):
+    return subprocess.run(f"command -v {prog}", shell=True,
+                          capture_output=True).returncode == 0
 
 
 def capture_start(bssids, channels, iface=None):

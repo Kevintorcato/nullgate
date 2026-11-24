@@ -107,6 +107,24 @@ def wifi_scan():
     return jsonify(m_wifi.scan(seconds=int(d.get("seconds", 12)), iface=d.get("iface")))
 
 
+@app.route("/api/wifi/recon", methods=["POST"])
+def wifi_recon():
+    d = request.json or {}
+    return jsonify(m_wifi.recon(d.get("essid"), d.get("bssids", []),
+                                d.get("channels", []), iface=d.get("iface")))
+
+
+@app.route("/api/wifi/saved")
+def wifi_saved():
+    return jsonify(m_wifi.saved_networks())
+
+
+@app.route("/api/wifi/forget", methods=["POST"])
+def wifi_forget():
+    d = request.json or {}
+    return jsonify(m_wifi.forget_network(d.get("essid")))
+
+
 @app.route("/api/wifi/capture/start", methods=["POST"])
 def wifi_capture_start():
     data = request.json or {}

@@ -82,10 +82,14 @@ function viewWifi() {
   $("#view").innerHTML = `
     <div class="warn">⚠️ Auditoria. Só nas suas redes ou com autorização.</div>
     ${ifaceBar()}
-    <button class="btn" id="btnScan">Escanear redes</button>
+    <div class="row">
+      <button class="btn" id="btnScan">Escanear redes</button>
+      <button class="btn sec" id="btnSaved" style="max-width:40%">Salvas</button>
+    </div>
     <div id="scanList" class="menu"></div>`;
   bindIface();
   $("#btnScan").onclick = doScan;
+  $("#btnSaved").onclick = viewSaved;
   if (SCAN.length) renderScan();
 }
 async function doScan() {
@@ -107,7 +111,80 @@ function renderScan() {
       </div><div class="chev">capturar ›</div>
     </div>`).join("");
   el.querySelectorAll(".item").forEach((it) =>
-    it.onclick = () => startCapture(SCAN[it.dataset.i]));
+    it.onclick = () => openNet(SCAN[it.dataset.i]));
+}
+
+/* ---------------- Detalhes da rede + recon ---------------- */
+function wpsBadge(w) {
+  if (w === "aberto") return '<span class="pill" style="color:var(--warn);border-color:var(--warn)">WPS aberto ⚠️</span>';
+  if (w === "travado") return '<span class="pill on">WPS travado</span>';
+  if (w === "nao") return '<span class="pill off">sem WPS</span>';
+  return '<span class="pill off">WPS ?</span>';
+}
+function openNet(net, saved) {
+  const r = saved || null;
+  $("#view").innerHTML = `
+    <button class="btn sec" onclick="go('wifi')" style="margin-bottom:10px">‹ voltar</button>
+    <div class="card">
+      <h3>${esc(net.essid)} ${net.meu ? '<span class="tag">minha</span>' : ""}</h3>
+      <div class="kv"><span class="k">Pontos de acesso</span><span class="v">${net.qtd_aps || (net.bssids||[]).length}</span></div>
+      <div class="kv"><span class="k">Canais</span><span class="v">${esc((net.canais||[]).join(", ") || "?")}</span></div>
+      <div class="kv"><span class="k">Segurança</span><span class="v">${esc(net.seguranca || "?")}</span></div>
+      <div id="reconExtra">${r ? reconRows(r) : ""}</div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn" id="btnAnalyze">Analisar</button>
+        <button class="btn sec" id="btnCap">Capturar</button>
+      </div>
+      <div id="analyzeOut" class="muted" style="margin-top:8px"></div>
+    </div>`;
+  $("#btnAnalyze").onclick = () => analyzeNet(net);
+  $("#btnCap").onclick = () => startCapture(net);
+}
+function reconRows(r) {
+  return `
+    <div class="kv"><span class="k">Cifra</span><span class="v">${esc(r.cifra || "?")} / ${esc(r.auth || "?")}</span></div>
+    <div class="kv"><span class="k">WPS</span><span class="v">${wpsBadge(r.wps)}</span></div>
+    <div class="kv"><span class="k">Clientes</span><span class="v">${r.clientes}</span></div>
+    <div class="kv"><span class="k">Captura viável</span><span class="v">${r.captura_viavel ? "✅ sim" : "⚠️ sem cliente"}</span></div>`;
+}
+async function analyzeNet(net) {
+  const b = $("#btnAnalyze");
+  b.disabled = true; b.innerHTML = `<span class="spin"></span>Analisando ~20s…`;
+  $("#analyzeOut").textContent = "scan focado + checando WPS…";
+  const r = await post("/api/wifi/recon", {
+    essid: net.essid, bssids: net.aps || net.bssids,
+    channels: (net.canais || []).map(Number).filter(Boolean), iface: IFACE });
+  b.disabled = false; b.textContent = "Analisar de novo";
+  if (!r.ok) { $("#analyzeOut").textContent = r.error || "falha"; return; }
+  $("#reconExtra").innerHTML = reconRows(r);
+  $("#analyzeOut").innerHTML = "✅ salvo. " + (r.wps === "aberto"
+    ? "<b style='color:var(--warn)'>WPS aberto — vulnerável!</b>"
+    : (r.captura_viavel ? "pronto pra capturar handshake." : "sem cliente agora; tente mais tarde."));
+  toast("análise salva");
+}
+
+/* ---------------- Salvas ---------------- */
+async function viewSaved() {
+  $("#view").innerHTML = `<div class="center"><span class="spin"></span>carregando…</div>`;
+  const r = await api("/api/wifi/saved");
+  const redes = r.redes || [];
+  $("#view").innerHTML = `
+    <button class="btn sec" onclick="go('wifi')" style="margin-bottom:10px">‹ voltar</button>
+    <h3 style="color:var(--mut);font-size:14px;text-transform:uppercase;margin:4px 0 10px">Redes analisadas</h3>
+    <div class="menu" id="savedList"></div>`;
+  const el = $("#savedList");
+  if (!redes.length) { el.innerHTML = `<div class="empty">nenhuma rede salva ainda</div>`; return; }
+  el.innerHTML = redes.map((n, i) => `
+    <div class="item ${n.wps === "aberto" ? "mine" : ""}" data-i="${i}">
+      <div class="it-main">
+        <div class="it-t">${esc(n.essid)}</div>
+        <div class="it-s">${esc(n.seguranca || "?")} · ${n.wps === "aberto" ? "WPS aberto ⚠️" : "WPS " + esc(n.wps || "?")} · ${n.clientes} cli</div>
+      </div><div class="chev">›</div>
+    </div>`).join("");
+  el.querySelectorAll(".item").forEach((it) =>
+    it.onclick = () => { const n = redes[it.dataset.i];
+      openNet({ essid: n.essid, aps: n.bssids, bssids: n.bssids, canais: n.canais,
+        seguranca: n.seguranca, qtd_aps: (n.bssids||[]).length }, n); });
 }
 
 /* ---------------- Captura ---------------- */
