@@ -26,6 +26,15 @@ html[data-theme="peppa"]{
 }
 html[data-theme="peppa"] .btn{color:#fff}
 
+/* fundo personalizado (imagem/gif) */
+html.hasbg body{background-image:var(--bgimg);background-size:cover;
+  background-position:center;background-attachment:fixed}
+html.hasbg body::before{content:"";position:fixed;inset:0;
+  background:rgba(4,8,13,.62);z-index:-1}
+html.hasbg .card,html.hasbg .item{background:rgba(10,14,20,.80);
+  backdrop-filter:blur(3px)}
+html.hasbg header,html.hasbg nav#tabs{background:rgba(8,11,16,.88)}
+
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;background:var(--bg);color:var(--fg);
   font:15px/1.5 ui-sans-serif,system-ui,"Segoe UI",Roboto,sans-serif}

@@ -18,6 +18,9 @@ from modules import hotspot as m_hotspot
 BASE = Path(__file__).resolve().parent
 WEB = BASE.parent / "web"
 CATALOG = BASE / "catalog.json"
+BG_DIR = WEB / "bg"
+BG_DIR.mkdir(exist_ok=True)
+BG_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 
 app = Flask(__name__, static_folder=None)
 
@@ -38,6 +41,35 @@ def static_files(f):
 def catalog():
     with open(CATALOG) as fh:
         return jsonify(json.load(fh))
+
+
+# ---------- fundo personalizado ----------
+@app.route("/api/background")
+def bg_get():
+    for f in sorted(BG_DIR.glob("bg.*")):
+        return jsonify({"ok": True, "url": f"/bg/{f.name}"})
+    return jsonify({"ok": True, "url": None})
+
+
+@app.route("/api/background", methods=["POST"])
+def bg_set():
+    f = request.files.get("file")
+    if not f or not f.filename:
+        return jsonify({"ok": False, "error": "nenhum arquivo"})
+    ext = os.path.splitext(f.filename)[1].lower()
+    if ext not in BG_EXTS:
+        return jsonify({"ok": False, "error": "use png, jpg, gif ou webp"})
+    for old in BG_DIR.glob("bg.*"):
+        old.unlink()
+    f.save(str(BG_DIR / f"bg{ext}"))
+    return jsonify({"ok": True, "url": f"/bg/bg{ext}"})
+
+
+@app.route("/api/background/clear", methods=["POST"])
+def bg_clear():
+    for f in BG_DIR.glob("bg.*"):
+        f.unlink()
+    return jsonify({"ok": True})
 
 
 # ---------- sistema / info ----------

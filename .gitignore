@@ -1,0 +1,4 @@
+web/bg/
+__pycache__/
+*.pyc
+/tmp/

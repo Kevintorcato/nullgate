@@ -24,6 +24,16 @@ function applyTheme(t) {
 }
 applyTheme(localStorage.getItem("ng_theme") || "dark");
 
+function applyBg(url) {
+  const h = document.documentElement;
+  if (url) { h.style.setProperty("--bgimg", `url("${url}?t=${Date.now()}")`); h.classList.add("hasbg"); }
+  else { h.classList.remove("hasbg"); h.style.removeProperty("--bgimg"); }
+}
+async function loadBg() {
+  try { const r = await api("/api/background"); applyBg(r.url); } catch (e) {}
+}
+loadBg();
+
 function toast(m){const t=$("#toast");t.textContent=m;t.classList.add("show");
   setTimeout(()=>t.classList.remove("show"),2300);}
 
@@ -194,6 +204,15 @@ async function viewConfig() {
     <div class="card"><h3>Tema</h3>
       <select id="themeSel">${themeOpts}</select>
     </div>
+    <div class="card"><h3>Fundo personalizado</h3>
+      <div class="muted" style="margin-bottom:6px">Imagem ou GIF (png/jpg/gif/webp). Fica salvo no Card.</div>
+      <input type="file" id="bgFile" accept="image/*">
+      <div class="row" style="margin-top:8px">
+        <button class="btn" id="bgUp">Enviar fundo</button>
+        <button class="btn danger" id="bgClr">Remover</button>
+      </div>
+      <div id="bgOut" class="muted" style="margin-top:8px"></div>
+    </div>
     <div class="card"><h3>Interface de ataque (padrão)</h3>
       ${ifaceBar()}
       <div class="muted" style="margin-top:6px">Usada no scan e captura. A wlan0 é a interna (conexão); o adaptador USB é o rádio.</div>
@@ -217,6 +236,19 @@ async function viewConfig() {
     </div>`;
   bindIface();
   $("#themeSel").onchange = (e) => { applyTheme(e.target.value); toast("tema: " + e.target.value); };
+  $("#bgUp").onclick = async () => {
+    const f = $("#bgFile").files[0];
+    if (!f) { toast("escolha um arquivo"); return; }
+    $("#bgOut").textContent = "enviando…";
+    const fd = new FormData(); fd.append("file", f);
+    const r = await (await fetch("/api/background", { method: "POST", body: fd })).json();
+    if (r.ok) { applyBg(r.url); $("#bgOut").textContent = "✅ fundo aplicado"; toast("fundo no ar"); }
+    else { $("#bgOut").textContent = r.error || "falha"; }
+  };
+  $("#bgClr").onclick = async () => {
+    await post("/api/background/clear"); applyBg(null);
+    $("#bgOut").textContent = "fundo removido"; toast("removido");
+  };
   $("#hsOn").onclick = async () => {
     const r = await post("/api/hotspot/start", {
       iface: $("#hsIf").value, ssid: $("#hsSsid").value, password: $("#hsPass").value });
