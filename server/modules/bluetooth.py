@@ -5,6 +5,7 @@ Nao faz spam de advertisement (que atingiria terceiros ao redor).
 """
 import re
 import subprocess
+import time
 
 OUIS = {  # fabricantes comuns (prefixo OUI -> nome), so pra ajudar a identificar
     "00:1A:7D": "Apple", "AC:BC:32": "Apple", "C0:0C:E9": "generico",
@@ -24,6 +25,7 @@ def scan(seconds=12):
     _sh("hciconfig hci0 up </dev/null", timeout=6)  # radio up
     # stop-find limpa discovery pendente (status Busy); </dev/null evita travar no stdin
     _sh("timeout 4 btmgmt stop-find </dev/null 2>&1", timeout=7)
+    time.sleep(1)  # deixa o discovery anterior encerrar antes de iniciar o novo
     out = _sh(f"timeout {seconds + 3} btmgmt --timeout {seconds} find </dev/null 2>&1",
               timeout=seconds + 10).stdout
     devs = {}
