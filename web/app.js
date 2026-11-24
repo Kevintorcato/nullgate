@@ -149,7 +149,7 @@ function renderScan() {
   el.innerHTML = SCAN.map((n, i) => `
     <div class="item ${n.meu ? "mine" : ""}" data-i="${i}">
       <div class="it-main">
-        <div class="it-t">${esc(n.essid)} ${n.meu ? '<span class="tag">minha</span>' : ""}</div>
+        <div class="it-t">${esc(n.essid)} ${n.meu ? '<span class="tag">minha</span>' : ""} ${n.tem_wpa3 ? '<span class="tag" style="color:#36e2a0;border-color:#36e2a0">WPA3</span>' : ""}</div>
         <div class="it-s">${n.qtd_aps} AP · ch ${esc(n.canais.join(",") || "?")} · ${esc(n.seguranca || "")}</div>
       </div><div class="chev">capturar ›</div>
     </div>`).join("");
@@ -164,34 +164,69 @@ function wpsBadge(w) {
   if (w === "nao") return '<span class="pill off">sem WPS</span>';
   return '<span class="pill off">WPS ?</span>';
 }
+let NET_TARGET = null;  // bssid do AP escolhido, ou null = todos
+function normAps(net) {
+  const src = net.aps || net.bssids || [];
+  return src.map((a) => typeof a === "string"
+    ? { bssid: a, canal: (net.canais || [])[0] || "", seguranca: net.seguranca || "?", wpa3: !!net.tem_wpa3 }
+    : a);
+}
 function openNet(net, saved) {
   const r = saved || null;
+  NET_TARGET = null;
+  const aps = normAps(net);
+  const wpa3 = net.tem_wpa3 || aps.some((a) => a.wpa3);
+  const apOpts = `<option value="">Todos os APs (${aps.length})</option>` +
+    aps.map((a) => `<option value="${a.bssid}">${esc(a.bssid)} · ch${esc(a.canal)} · ${esc(a.seguranca)}${a.wpa3 ? " 🛡️" : ""}</option>`).join("");
   $("#view").innerHTML = `
     <button class="btn sec" onclick="go('wifi')" style="margin-bottom:10px">‹ voltar</button>
     <div class="card">
       <h3>${esc(net.essid)} ${net.meu ? '<span class="tag">minha</span>' : ""}</h3>
-      <div class="kv"><span class="k">Pontos de acesso</span><span class="v">${net.qtd_aps || (net.bssids||[]).length}</span></div>
+      <div class="kv"><span class="k">Pontos de acesso</span><span class="v">${aps.length}</span></div>
       <div class="kv"><span class="k">Canais</span><span class="v">${esc((net.canais||[]).join(", ") || "?")}</span></div>
-      <div class="kv"><span class="k">Segurança</span><span class="v">${esc(net.seguranca || "?")}</span></div>
+      <div class="kv"><span class="k">Segurança</span><span class="v">${esc(net.seguranca || "?")} ${wpa3 ? '<span class="pill on">WPA3 🛡️</span>' : ""}</span></div>
       <div id="reconExtra">${r ? reconRows(r) : ""}</div>
       <div id="analyzeOut" class="muted" style="margin-top:8px"></div>
+    </div>
+    <div class="card"><h3>Ponto de acesso alvo</h3>
+      <select id="apSel">${apOpts}</select>
+      <div class="muted" id="apNote" style="margin-top:6px"></div>
     </div>
     <div class="card"><h3>Ataques</h3>
       <button class="btn" id="btnAnalyze">🔍 Analisar (recon + WPS)</button>
       <button class="btn" id="btnCapA" style="margin-top:8px">💥 Capturar + Deauth (ativo)</button>
       <button class="btn sec" id="btnCapP" style="margin-top:8px">🎧 Capturar passivo (só escuta)</button>
       <button class="btn danger" id="btnDeauth" style="margin-top:8px">📡 Só Deauth (derrubar)</button>
-      <div class="muted" style="margin-top:8px">O modo <b>ativo</b> já derruba os clientes e captura o handshake no mesmo processo — é o combinado.</div>
+      <div class="muted" style="margin-top:8px">O modo <b>ativo</b> derruba e captura no mesmo processo. ${wpa3 ? '<b style="color:#ffb454">WPA3 bloqueia deauth (PMF)</b> — mire um AP WPA2 do mesh.' : ""}</div>
     </div>`;
+  const apNote = () => {
+    const ap = aps.find((a) => a.bssid === NET_TARGET);
+    $("#apNote").innerHTML = ap && ap.wpa3
+      ? '⚠️ AP WPA3 — deauth provavelmente não funciona (PMF).'
+      : (NET_TARGET ? "AP WPA2 — deauth deve funcionar." : "mira todos os APs da rede.");
+  };
+  $("#apSel").onchange = (e) => { NET_TARGET = e.target.value || null; apNote(); };
+  apNote();
   $("#btnAnalyze").onclick = () => analyzeNet(net);
   $("#btnCapA").onclick = () => startCapture(net, "ativo");
   $("#btnCapP").onclick = () => startCapture(net, "passivo");
   $("#btnDeauth").onclick = () => deauthNet(net);
 }
+function targetBssids(net) {
+  const aps = normAps(net);
+  return NET_TARGET ? [NET_TARGET] : aps.map((a) => a.bssid);
+}
+function targetChannels(net) {
+  const aps = normAps(net);
+  const list = NET_TARGET ? aps.filter((a) => a.bssid === NET_TARGET) : aps;
+  return [...new Set(list.map((a) => Number(a.canal)).filter(Boolean))];
+}
 async function deauthNet(net) {
-  const ch = (net.canais || [])[0] || "";
-  const bssid = (net.aps || net.bssids || [])[0];
-  if (!bssid) { toast("sem BSSID"); return; }
+  const aps = normAps(net);
+  const ap = NET_TARGET ? aps.find((a) => a.bssid === NET_TARGET) : aps.find((a) => !a.wpa3) || aps[0];
+  if (!ap) { toast("sem BSSID"); return; }
+  const bssid = ap.bssid, ch = ap.canal;
+  if (ap.wpa3) toast("⚠️ AP WPA3 — deauth pode não funcionar");
   const fx = fxRun("DEAUTH · " + bssid, 10500, [
     "travando canal " + (ch || "?") + "…", "montando quadros 802.11 deauth…",
     "alvo: " + bssid, "injetando broadcast…", "derrubando clientes…",
@@ -202,10 +237,16 @@ async function deauthNet(net) {
   setTimeout(() => { $("#analyzeOut").innerHTML =
     `📡 deauth enviado. Agora rode <b>Capturar</b> — os clientes vão reconectar e soltar o handshake.`; }, 680);
 }
+function deauthBadge(d) {
+  if (d === "bloqueado") return '<span class="pill on">imune (WPA3/PMF) 🛡️</span>';
+  if (d === "parcial") return '<span class="pill" style="color:#ffb454;border-color:#ffb454">parcial (WPA3)</span>';
+  return '<span class="pill" style="color:var(--warn);border-color:var(--warn)">funciona ⚠️</span>';
+}
 function reconRows(r) {
   return `
     <div class="kv"><span class="k">Cifra</span><span class="v">${esc(r.cifra || "?")} / ${esc(r.auth || "?")}</span></div>
     <div class="kv"><span class="k">WPS</span><span class="v">${wpsBadge(r.wps)}</span></div>
+    <div class="kv"><span class="k">Deauth</span><span class="v">${deauthBadge(r.deauth)}</span></div>
     <div class="kv"><span class="k">Clientes</span><span class="v">${r.clientes}</span></div>
     <div class="kv"><span class="k">Captura viável</span><span class="v">${r.captura_viavel ? "✅ sim" : "⚠️ sem cliente"}</span></div>`;
 }
@@ -216,8 +257,8 @@ async function analyzeNet(net) {
     "sondando WPS (wash)…", "enumerando clientes…",
     "avaliando vetor de ataque…"]);
   const r = await post("/api/wifi/recon", {
-    essid: net.essid, bssids: net.aps || net.bssids,
-    channels: (net.canais || []).map(Number).filter(Boolean), iface: IFACE });
+    essid: net.essid, bssids: targetBssids(net),
+    channels: targetChannels(net), iface: IFACE });
   if (!r.ok) { fx.fail(r.error || "falha"); return; }
   fx.done(r.wps === "aberto" ? "WPS ABERTO detectado!" : (r.seguranca || "ok"));
   setTimeout(() => {
@@ -256,7 +297,7 @@ async function viewSaved() {
 /* ---------------- Captura ---------------- */
 async function startCapture(net, mode) {
   const r = await post("/api/wifi/capture/start", {
-    bssids: net.aps || net.bssids, channels: (net.canais || []).map(Number).filter(Boolean),
+    bssids: targetBssids(net), channels: targetChannels(net),
     iface: IFACE, mode: mode || "ativo", essid: net.essid });
   if (!r.ok) { toast(r.error || "falha"); return; }
   viewCapture(net, mode || "ativo");

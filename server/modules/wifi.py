@@ -124,23 +124,35 @@ def _parse_scan():
                 "essid": essid,
                 "meu": _own_essid(essid),
             })
-    # agrupa por ESSID, guardando todos os BSSIDs (mesh)
+    # agrupa por ESSID, guardando cada AP (mesh) com sua propria seguranca
     agg = {}
     for n in nets:
         k = n["essid"]
         if k not in agg:
-            agg[k] = {"essid": k, "meu": n["meu"], "seguranca": n["seguranca"],
-                      "aps": [], "canais": set()}
-        agg[k]["aps"].append(n["bssid"])
+            agg[k] = {"essid": k, "meu": n["meu"], "aps": [], "canais": set(), "segs": set()}
+        agg[k]["aps"].append({"bssid": n["bssid"], "canal": n["canal"],
+                              "seguranca": n["seguranca"], "wpa3": _is_wpa3(n["seguranca"])})
         if n["canal"]:
             agg[k]["canais"].add(n["canal"])
+        if n["seguranca"]:
+            agg[k]["segs"].add(n["seguranca"])
     out = []
     for v in agg.values():
         v["canais"] = sorted(v["canais"])
         v["qtd_aps"] = len(v["aps"])
+        # resumo de seguranca da rede (o "mais forte" presente)
+        segs = v.pop("segs")
+        v["seguranca"] = " / ".join(sorted(segs)) if segs else "?"
+        v["tem_wpa3"] = any(a["wpa3"] for a in v["aps"])
+        v["bssids"] = [a["bssid"] for a in v["aps"]]  # compat
         out.append(v)
     out.sort(key=lambda x: (not x["meu"], x["essid"]))
     return out
+
+
+def _is_wpa3(sec):
+    s = (sec or "").upper()
+    return "WPA3" in s or "SAE" in s
 
 
 # ---------------- store (salva recon por rede) ----------------
@@ -199,6 +211,8 @@ def recon(essid, bssids, channels, iface=None):
     finally:
         _set_managed(iface)
 
+    wpa3 = _is_wpa3(enc.get("privacy", "") + " " + enc.get("auth", ""))
+    sae_only = "SAE" in enc.get("auth", "").upper() and "PSK" not in enc.get("auth", "").upper()
     result = {
         "essid": essid,
         "bssids": bssids,
@@ -208,6 +222,9 @@ def recon(essid, bssids, channels, iface=None):
         "auth": enc.get("auth", "?"),
         "wps": wps,                       # "aberto" | "travado" | "nao" | "desconhecido"
         "clientes": clients,
+        "wpa3": wpa3,
+        # WPA3 puro (SAE-only) exige PMF -> deauth bloqueado. Transicao (SAE+PSK) pode cair.
+        "deauth": "bloqueado" if sae_only else ("parcial" if wpa3 else "ok"),
         "captura_viavel": clients > 0 or enc.get("privacy", "").startswith("WPA"),
         "ts": int(time.time()),
     }
