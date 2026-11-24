@@ -73,11 +73,36 @@ def _cleanup_iface(iface):
     _set_managed(iface)
 
 
+def _usb_reset(iface):
+    """Corta e religa a energia do adaptador USB — revive firmware travado
+    do rtl8xxxu (comum em adaptadores baratos apos uso intenso de monitor/deauth)."""
+    try:
+        link = os.path.realpath(f"/sys/class/net/{iface}/device")  # .../1-1.2:1.0
+        node = os.path.basename(link).split(":")[0]                # 1-1.2
+        auth = f"/sys/bus/usb/devices/{node}/authorized"
+        if os.path.exists(auth):
+            _sh(f"echo 0 > {auth}", timeout=8)
+            time.sleep(3)
+            _sh(f"echo 1 > {auth}", timeout=8)
+            time.sleep(5)
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def reset_radio(iface=None):
-    """Botao de panico: desemperra a placa."""
+    """Botao de panico: mata orfaos, re-energiza o USB e volta pra managed."""
     iface = _pick(iface)
-    _cleanup_iface(iface)
-    return {"ok": True, "msg": f"{iface} resetada (managed)"}
+    _sh("pkill -9 hcxdumptool 2>/dev/null; pkill -9 aireplay-ng 2>/dev/null; "
+        "pkill -9 airodump-ng 2>/dev/null; pkill -9 wash 2>/dev/null", timeout=10)
+    _capture["proc"] = None
+    revived = _usb_reset(iface)
+    time.sleep(1)
+    if _radio_present(iface):
+        _set_managed(iface)
+    return {"ok": True, "usb_reset": revived,
+            "msg": f"{iface} resetada" + (" + USB re-energizado" if revived else "")}
 
 
 def _own_essid(essid):
