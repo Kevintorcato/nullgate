@@ -20,7 +20,8 @@ _capture = {"proc": None, "started": 0, "targets": [], "iface": None}
 
 
 def _sh(cmd, timeout=20):
-    return subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+    return subprocess.run(cmd, shell=True, capture_output=True, text=True,
+                          errors="replace", timeout=timeout)
 
 
 def _pick(iface):
@@ -61,9 +62,12 @@ def scan(seconds=12, iface=None):
             pass
     _set_monitor(iface)
     try:
+        # saida do airodump vai pro /dev/null (lemos o CSV do disco; evita
+        # acumular MBs de saida binaria na RAM do Card)
         _sh(
             f"timeout {seconds} airodump-ng {iface} --band bg "
-            f"-w {WORK}/scan --output-format csv --write-interval 3",
+            f"-w {WORK}/scan --output-format csv --write-interval 3 "
+            f">/dev/null 2>&1",
             timeout=seconds + 10,
         )
     finally:

@@ -3,6 +3,29 @@
   --fg:#d6e0ee; --mut:#7d8aa0; --acc:#36e2a0; --acc2:#2bb37d;
   --warn:#ff5d73; --mine:#36e2a0; --ai:#9b7dff;
 }
+/* ===== TEMAS ===== */
+/* hacker / matrix */
+html[data-theme="hacker"]{
+  --bg:#000500;--panel:#030d03;--panel2:#061606;--bd:#0d3a0d;
+  --fg:#2bff6a;--mut:#1f9a44;--acc:#00ff41;--acc2:#00c030;
+  --warn:#ff3b3b;--mine:#00ff41;
+}
+html[data-theme="hacker"] body{font-family:"Courier New",ui-monospace,monospace}
+html[data-theme="hacker"] .brand{text-shadow:0 0 8px #00ff41}
+/* itachi / sharingan */
+html[data-theme="itachi"]{
+  --bg:#0c0608;--panel:#1a0d10;--panel2:#260f14;--bd:#4a1620;
+  --fg:#f0d6da;--mut:#a06a74;--acc:#e11d2a;--acc2:#b01420;
+  --warn:#ff6b3b;--mine:#e11d2a;
+}
+/* peppa pig kkkk */
+html[data-theme="peppa"]{
+  --bg:#ffe6f2;--panel:#ffd1e8;--panel2:#ffbfdf;--bd:#ff9ecb;
+  --fg:#7a2048;--mut:#c76a95;--acc:#ff4fa3;--acc2:#e23b8a;
+  --warn:#d6336c;--mine:#ff4fa3;
+}
+html[data-theme="peppa"] .btn{color:#fff}
+
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;background:var(--bg);color:var(--fg);
   font:15px/1.5 ui-sans-serif,system-ui,"Segoe UI",Roboto,sans-serif}

@@ -11,6 +11,19 @@ const ICON = { wifi: "📶", cpu: "🖥️", network: "🌐", config: "⚙️", 
 let CAT = null, SCAN = [], CURRENT = "wifi", capTimer = null;
 let IFACES = [], IFACE = localStorage.getItem("ng_iface") || "wlan1";
 
+const THEMES = [
+  { id: "dark", nome: "Dark" },
+  { id: "hacker", nome: "Hacker 🟢" },
+  { id: "itachi", nome: "Itachi 🔴" },
+  { id: "peppa", nome: "Peppa Pig 🐷" },
+];
+function applyTheme(t) {
+  if (t && t !== "dark") document.documentElement.dataset.theme = t;
+  else document.documentElement.removeAttribute("data-theme");
+  localStorage.setItem("ng_theme", t || "dark");
+}
+applyTheme(localStorage.getItem("ng_theme") || "dark");
+
 function toast(m){const t=$("#toast");t.textContent=m;t.classList.add("show");
   setTimeout(()=>t.classList.remove("show"),2300);}
 
@@ -174,7 +187,13 @@ async function viewConfig() {
   const hs = await api("/api/hotspot/status");
   const opts = IFACES.map((i) =>
     `<option value="${i.nome}" ${i.nome === "wlan0" ? "selected" : ""}>${esc(i.nome)} · ${esc(i.papel || "")}</option>`).join("");
+  const curTheme = localStorage.getItem("ng_theme") || "dark";
+  const themeOpts = THEMES.map((t) =>
+    `<option value="${t.id}" ${t.id === curTheme ? "selected" : ""}>${esc(t.nome)}</option>`).join("");
   $("#view").innerHTML = `
+    <div class="card"><h3>Tema</h3>
+      <select id="themeSel">${themeOpts}</select>
+    </div>
     <div class="card"><h3>Interface de ataque (padrão)</h3>
       ${ifaceBar()}
       <div class="muted" style="margin-top:6px">Usada no scan e captura. A wlan0 é a interna (conexão); o adaptador USB é o rádio.</div>
@@ -197,6 +216,7 @@ async function viewConfig() {
       <div id="hsOut"></div>
     </div>`;
   bindIface();
+  $("#themeSel").onchange = (e) => { applyTheme(e.target.value); toast("tema: " + e.target.value); };
   $("#hsOn").onclick = async () => {
     const r = await post("/api/hotspot/start", {
       iface: $("#hsIf").value, ssid: $("#hsSsid").value, password: $("#hsPass").value });
