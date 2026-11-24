@@ -12,31 +12,36 @@ import signal
 import subprocess
 import time
 
-RADIO = os.environ.get("NULLGATE_RADIO", "wlan1")  # placa de ataque
+DEFAULT_RADIO = os.environ.get("NULLGATE_RADIO", "wlan1")  # placa de ataque padrao
 WORK = "/tmp/nullgate"
 os.makedirs(WORK, exist_ok=True)
 
-_capture = {"proc": None, "started": 0, "targets": []}
+_capture = {"proc": None, "started": 0, "targets": [], "iface": None}
 
 
 def _sh(cmd, timeout=20):
     return subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
 
 
-def _radio_present():
-    return os.path.exists(f"/sys/class/net/{RADIO}")
+def _pick(iface):
+    """Interface a usar: a escolhida, ou a padrao."""
+    return iface or DEFAULT_RADIO
 
 
-def _set_monitor():
-    _sh(f"ip link set {RADIO} down")
-    _sh(f"iw dev {RADIO} set type monitor")
-    _sh(f"ip link set {RADIO} up")
+def _radio_present(iface):
+    return os.path.exists(f"/sys/class/net/{iface}")
 
 
-def _set_managed():
-    _sh(f"ip link set {RADIO} down")
-    _sh(f"iw dev {RADIO} set type managed")
-    _sh(f"ip link set {RADIO} up")
+def _set_monitor(iface):
+    _sh(f"ip link set {iface} down")
+    _sh(f"iw dev {iface} set type monitor")
+    _sh(f"ip link set {iface} up")
+
+
+def _set_managed(iface):
+    _sh(f"ip link set {iface} down")
+    _sh(f"iw dev {iface} set type managed")
+    _sh(f"ip link set {iface} up")
 
 
 def _own_essid(essid):
@@ -45,24 +50,25 @@ def _own_essid(essid):
     return any(k in e for k in ["wr_", "wr ", "lk_", "iot", "supermerc", "wr-"])
 
 
-def scan(seconds=12):
-    if not _radio_present():
-        return {"ok": False, "error": f"adaptador {RADIO} ausente. Plugue o USB WiFi."}
+def scan(seconds=12, iface=None):
+    iface = _pick(iface)
+    if not _radio_present(iface):
+        return {"ok": False, "error": f"interface {iface} ausente."}
     for f in glob.glob(f"{WORK}/scan-*.csv"):
         try:
             os.remove(f)
         except OSError:
             pass
-    _set_monitor()
+    _set_monitor(iface)
     try:
         _sh(
-            f"timeout {seconds} airodump-ng {RADIO} --band bg "
+            f"timeout {seconds} airodump-ng {iface} --band bg "
             f"-w {WORK}/scan --output-format csv --write-interval 3",
             timeout=seconds + 10,
         )
     finally:
-        _set_managed()
-    return {"ok": True, "networks": _parse_scan()}
+        _set_managed(iface)
+    return {"ok": True, "iface": iface, "networks": _parse_scan()}
 
 
 def _parse_scan():
@@ -115,9 +121,10 @@ def _parse_scan():
     return out
 
 
-def capture_start(bssids, channels):
-    if not _radio_present():
-        return {"ok": False, "error": f"adaptador {RADIO} ausente."}
+def capture_start(bssids, channels, iface=None):
+    iface = _pick(iface)
+    if not _radio_present(iface):
+        return {"ok": False, "error": f"interface {iface} ausente."}
     if _capture["proc"] and _capture["proc"].poll() is None:
         return {"ok": False, "error": "captura ja em andamento"}
     if not bssids:
@@ -135,16 +142,16 @@ def capture_start(bssids, channels):
     except OSError:
         pass
     # hcxdumptool seta o monitor sozinho; garantimos managed antes
-    _set_managed()
+    _set_managed(iface)
     proc = subprocess.Popen(
-        ["hcxdumptool", "-i", RADIO, "-w", cap, f"--bpf={bpf}",
+        ["hcxdumptool", "-i", iface, "-w", cap, f"--bpf={bpf}",
          "-c", chans, "--rds=1"],
         stdout=open(f"{WORK}/hcx.log", "w"),
         stderr=subprocess.STDOUT,
         preexec_fn=os.setsid,
     )
-    _capture.update({"proc": proc, "started": time.time(), "targets": bssids})
-    return {"ok": True, "msg": "captura iniciada", "alvos": bssids, "canais": chans}
+    _capture.update({"proc": proc, "started": time.time(), "targets": bssids, "iface": iface})
+    return {"ok": True, "msg": "captura iniciada", "iface": iface, "alvos": bssids, "canais": chans}
 
 
 def capture_status():
@@ -185,7 +192,7 @@ def capture_stop():
             os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
         except Exception:
             proc.terminate()
-    _set_managed()
+    _set_managed(_capture.get("iface") or DEFAULT_RADIO)
     cap = f"{WORK}/capture.pcapng"
     hs = _count_handshakes(cap) if os.path.exists(cap) else 0
     return {"ok": True, "msg": "captura parada", "handshakes": hs}

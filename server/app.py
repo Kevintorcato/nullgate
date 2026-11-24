@@ -13,6 +13,7 @@ from flask import Flask, jsonify, request, send_from_directory
 
 from modules import system as m_system
 from modules import wifi as m_wifi
+from modules import hotspot as m_hotspot
 
 BASE = Path(__file__).resolve().parent
 WEB = BASE.parent / "web"
@@ -45,11 +46,33 @@ def status():
     return jsonify(m_system.collect())
 
 
+@app.route("/api/interfaces")
+def interfaces():
+    return jsonify({"ok": True, "ifaces": m_system.wifi_ifaces()})
+
+
+# ---------- Hotspot / Config ----------
+@app.route("/api/hotspot/status")
+def hotspot_status():
+    return jsonify(m_hotspot.status())
+
+
+@app.route("/api/hotspot/start", methods=["POST"])
+def hotspot_start():
+    d = request.json or {}
+    return jsonify(m_hotspot.start(d.get("iface"), d.get("ssid"), d.get("password")))
+
+
+@app.route("/api/hotspot/stop", methods=["POST"])
+def hotspot_stop():
+    return jsonify(m_hotspot.stop())
+
+
 # ---------- WiFi ----------
 @app.route("/api/wifi/scan", methods=["POST"])
 def wifi_scan():
-    secs = int(request.json.get("seconds", 12)) if request.is_json else 12
-    return jsonify(m_wifi.scan(seconds=secs))
+    d = request.json or {}
+    return jsonify(m_wifi.scan(seconds=int(d.get("seconds", 12)), iface=d.get("iface")))
 
 
 @app.route("/api/wifi/capture/start", methods=["POST"])
@@ -57,7 +80,7 @@ def wifi_capture_start():
     data = request.json or {}
     bssids = data.get("bssids", [])
     channels = data.get("channels", [])
-    return jsonify(m_wifi.capture_start(bssids, channels))
+    return jsonify(m_wifi.capture_start(bssids, channels, iface=data.get("iface")))
 
 
 @app.route("/api/wifi/capture/status")

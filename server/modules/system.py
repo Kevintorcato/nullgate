@@ -3,7 +3,7 @@ import os
 import re
 import subprocess
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 
 def _sh(cmd, timeout=8):
@@ -120,6 +120,18 @@ def _interfaces():
 def _usb_wifi():
     lst = _sh("lsusb | grep -iE 'wlan|802.11|realtek.*wlan|ralink|atheros|mediatek'")
     return [l.split("ID ", 1)[-1] for l in lst.splitlines() if l]
+
+
+def wifi_ifaces():
+    """Lista so as interfaces WiFi, para seletor na UI."""
+    out = []
+    for i in _interfaces():
+        if i["nome"].startswith(("wlan", "wlx")):
+            # managed pelo NetworkManager?
+            st = _sh(f"nmcli -t -f DEVICE,STATE device status | grep '^{i['nome']}:'")
+            i["nm"] = "unmanaged" not in st if st else True
+            out.append(i)
+    return out
 
 
 def collect():
