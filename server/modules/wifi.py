@@ -55,6 +55,7 @@ def _set_monitor(iface):
     _sh(f"ip link set {iface} down")
     _sh(f"iw dev {iface} set type monitor")
     _sh(f"ip link set {iface} up")
+    time.sleep(1.5)  # rtl8xxxu precisa assentar antes de capturar
 
 
 def _set_managed(iface):
@@ -64,13 +65,13 @@ def _set_managed(iface):
 
 
 def _cleanup_iface(iface):
-    """Mata capturas/ataques orfaos e devolve a interface ao modo managed.
-    Chamado antes de scan/recon/captura e no stop, pra nunca deixar a placa presa."""
+    """Mata capturas/ataques orfaos. NAO troca o modo (quem chama decide:
+    scan/recon vao pra monitor, stop vai pra managed) — evita transicoes extras
+    que confundem o rtl8xxxu."""
     _sh("pkill -9 hcxdumptool 2>/dev/null; pkill -9 aireplay-ng 2>/dev/null; "
         "pkill -9 airodump-ng 2>/dev/null; pkill -9 wash 2>/dev/null", timeout=10)
     _capture["proc"] = None
     time.sleep(0.4)
-    _set_managed(iface)
 
 
 def _usb_reset(iface):
@@ -84,7 +85,7 @@ def _usb_reset(iface):
             _sh(f"echo 0 > {auth}", timeout=8)
             time.sleep(3)
             _sh(f"echo 1 > {auth}", timeout=8)
-            time.sleep(5)
+            time.sleep(9)   # rtl8188fu demora a reaparecer e estabilizar
             return True
     except Exception:
         pass
@@ -480,7 +481,8 @@ def capture_stop():
             except Exception:
                 pass
     iface = _capture.get("iface") or DEFAULT_RADIO
-    _cleanup_iface(iface)  # mata orfaos + volta pra managed (desemperra)
+    _cleanup_iface(iface)      # mata orfaos
+    _set_managed(iface)        # volta pra managed (desemperra)
     cap = f"{WORK}/capture.pcapng"
     hs = _count_handshakes(cap, force=True) if os.path.exists(cap) else 0
     return {"ok": True, "msg": "captura parada", "handshakes": hs, "iface": iface}
