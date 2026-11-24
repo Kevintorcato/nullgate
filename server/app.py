@@ -130,7 +130,31 @@ def wifi_capture_start():
     data = request.json or {}
     bssids = data.get("bssids", [])
     channels = data.get("channels", [])
-    return jsonify(m_wifi.capture_start(bssids, channels, iface=data.get("iface")))
+    return jsonify(m_wifi.capture_start(bssids, channels, iface=data.get("iface"),
+                                        mode=data.get("mode", "ativo"), essid=data.get("essid")))
+
+
+@app.route("/api/wifi/deauth", methods=["POST"])
+def wifi_deauth():
+    d = request.json or {}
+    return jsonify(m_wifi.deauth(d.get("bssid"), d.get("channel"),
+                                 iface=d.get("iface"), seconds=int(d.get("seconds", 10))))
+
+
+@app.route("/api/files")
+def files_list():
+    return jsonify(m_wifi.list_files())
+
+
+@app.route("/api/files/download/<name>")
+def files_download(name):
+    from flask import send_from_directory
+    return send_from_directory(m_wifi.CAPTURES, name, as_attachment=True)
+
+
+@app.route("/api/files/delete", methods=["POST"])
+def files_delete():
+    return jsonify(m_wifi.delete_file((request.json or {}).get("name")))
 
 
 @app.route("/api/wifi/capture/status")

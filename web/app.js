@@ -7,7 +7,7 @@ const post = (path, body) =>
 const esc = (s) => (s || "").toString().replace(/[&<>"]/g,
   (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[m]));
 
-const ICON = { wifi: "📶", cpu: "🖥️", network: "🌐", config: "⚙️", info: "ℹ️" };
+const ICON = { wifi: "📶", cpu: "🖥️", network: "🌐", config: "⚙️", info: "ℹ️", files: "📁" };
 let CAT = null, SCAN = [], CURRENT = "wifi", capTimer = null;
 let IFACES = [], IFACE = localStorage.getItem("ng_iface") || "wlan1";
 
@@ -44,6 +44,7 @@ async function boot() {
   const secs = [
     { id: "wifi", title: "WiFi", icon: "wifi" },
     { id: "rede", title: "Rede", icon: "network" },
+    { id: "files", title: "Arquivos", icon: "files" },
     { id: "sistema", title: "Sistema", icon: "cpu" },
     { id: "config", title: "Config", icon: "config" },
   ];
@@ -74,7 +75,7 @@ function go(sec) {
   CURRENT = sec;
   $("#tabs").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.sec === sec));
   if (capTimer) { clearInterval(capTimer); capTimer = null; }
-  ({ wifi: viewWifi, rede: viewRede, sistema: viewSystem, config: viewConfig }[sec] || viewWifi)();
+  ({ wifi: viewWifi, rede: viewRede, files: viewFiles, sistema: viewSystem, config: viewConfig }[sec] || viewWifi)();
 }
 
 /* ---------------- WiFi ---------------- */
@@ -131,14 +132,30 @@ function openNet(net, saved) {
       <div class="kv"><span class="k">Canais</span><span class="v">${esc((net.canais||[]).join(", ") || "?")}</span></div>
       <div class="kv"><span class="k">Segurança</span><span class="v">${esc(net.seguranca || "?")}</span></div>
       <div id="reconExtra">${r ? reconRows(r) : ""}</div>
-      <div class="row" style="margin-top:12px">
-        <button class="btn" id="btnAnalyze">Analisar</button>
-        <button class="btn sec" id="btnCap">Capturar</button>
-      </div>
       <div id="analyzeOut" class="muted" style="margin-top:8px"></div>
+    </div>
+    <div class="card"><h3>Ataques</h3>
+      <button class="btn" id="btnAnalyze">🔍 Analisar (recon + WPS)</button>
+      <button class="btn" id="btnCapA" style="margin-top:8px">💥 Capturar + Deauth (ativo)</button>
+      <button class="btn sec" id="btnCapP" style="margin-top:8px">🎧 Capturar passivo (só escuta)</button>
+      <button class="btn danger" id="btnDeauth" style="margin-top:8px">📡 Só Deauth (derrubar)</button>
+      <div class="muted" style="margin-top:8px">O modo <b>ativo</b> já derruba os clientes e captura o handshake no mesmo processo — é o combinado.</div>
     </div>`;
   $("#btnAnalyze").onclick = () => analyzeNet(net);
-  $("#btnCap").onclick = () => startCapture(net);
+  $("#btnCapA").onclick = () => startCapture(net, "ativo");
+  $("#btnCapP").onclick = () => startCapture(net, "passivo");
+  $("#btnDeauth").onclick = () => deauthNet(net);
+}
+async function deauthNet(net) {
+  const ch = (net.canais || [])[0] || "";
+  const bssid = (net.aps || net.bssids || [])[0];
+  if (!bssid) { toast("sem BSSID"); return; }
+  toast("derrubando clientes ~10s…");
+  const r = await post("/api/wifi/deauth", { bssid, channel: Number(ch) || null, iface: IFACE, seconds: 10 });
+  $("#analyzeOut").innerHTML = r.ok
+    ? `📡 deauth enviado (${r.pacotes || 0} pacotes). Agora rode <b>Capturar</b> — os clientes vão reconectar.`
+    : (r.error || "falha");
+  toast(r.ok ? "deauth feito" : (r.error || "falha"));
 }
 function reconRows(r) {
   return `
@@ -188,16 +205,17 @@ async function viewSaved() {
 }
 
 /* ---------------- Captura ---------------- */
-async function startCapture(net) {
+async function startCapture(net, mode) {
   const r = await post("/api/wifi/capture/start", {
-    bssids: net.aps, channels: net.canais.map(Number).filter(Boolean), iface: IFACE });
+    bssids: net.aps || net.bssids, channels: (net.canais || []).map(Number).filter(Boolean),
+    iface: IFACE, mode: mode || "ativo", essid: net.essid });
   if (!r.ok) { toast(r.error || "falha"); return; }
-  viewCapture(net);
+  viewCapture(net, mode || "ativo");
 }
-function viewCapture(net) {
+function viewCapture(net, mode) {
   $("#view").innerHTML = `
     <div class="card">
-      <h3>Capturando — ${esc(net.essid)} <span class="muted">(${esc(IFACE)})</span></h3>
+      <h3>Capturando — ${esc(net.essid)} <span class="muted">(${esc(IFACE)} · ${esc(mode || "ativo")})</span></h3>
       <div class="kv"><span class="k">Tempo</span><span class="v" id="cT">0s</span></div>
       <div class="kv"><span class="k">Capturado</span><span class="v" id="cB">0 KB</span></div>
       <div class="kv"><span class="k">Handshakes</span><span class="v" id="cH">0</span></div>
@@ -335,6 +353,34 @@ async function viewConfig() {
     if (r.ok) toast("hotspot no ar");
   };
   $("#hsOff").onclick = async () => { const r = await post("/api/hotspot/stop"); toast(r.msg || "ok"); viewConfig(); };
+}
+
+/* ---------------- Arquivos salvos ---------------- */
+async function viewFiles() {
+  $("#view").innerHTML = `<div class="center"><span class="spin"></span>carregando…</div>`;
+  const r = await api("/api/files");
+  const fs = r.files || [];
+  const human = (b) => b > 1048576 ? (b/1048576).toFixed(1)+" MB" : (b/1024).toFixed(1)+" KB";
+  const when = (ts) => new Date(ts*1000).toLocaleString("pt-BR");
+  $("#view").innerHTML = `
+    <h3 style="color:var(--mut);font-size:14px;text-transform:uppercase;margin:4px 0 10px">Testes salvos</h3>
+    <div class="menu" id="filesList"></div>
+    <div class="muted" style="margin-top:10px">Handshakes e capturas ficam salvos no Card. Baixe os .hc22000 pra quebrar na GPU.</div>`;
+  const el = $("#filesList");
+  if (!fs.length) { el.innerHTML = `<div class="empty">nenhum arquivo salvo ainda</div>`; return; }
+  el.innerHTML = fs.map((f) => `
+    <div class="item">
+      <div class="it-main">
+        <div class="it-t">${f.tipo === "handshake" ? "🔑" : "📦"} ${esc(f.nome)}</div>
+        <div class="it-s">${human(f.bytes)} · ${when(f.ts)}</div>
+      </div>
+      <div style="display:flex;gap:6px">
+        <a class="chev" href="/api/files/download/${encodeURIComponent(f.nome)}" download>baixar</a>
+        <span class="chev" data-del="${esc(f.nome)}" style="color:var(--warn)">apagar</span>
+      </div>
+    </div>`).join("");
+  el.querySelectorAll("[data-del]").forEach((b) =>
+    b.onclick = async () => { await post("/api/files/delete", { name: b.dataset.del }); viewFiles(); });
 }
 
 /* ---------------- Sistema ---------------- */

