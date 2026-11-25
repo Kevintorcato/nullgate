@@ -572,25 +572,22 @@ def capture_status():
 
 
 def _count_handshakes(cap, force=False):
+    """Conta handshakes QUEBRAVEIS: so os que o hcxpcapngtool converte pra
+    hc22000 (EAPOL pair valido ou PMKID). Evita falso positivo do aircrack,
+    que lista 'WPA (0 handshake)' pra toda rede WPA. 'Pegou' = da pra quebrar."""
     now = time.time()
     if not force and now - _last_hs["ts"] < 8:
         return _last_hs["n"]
-    r = _sh(f"aircrack-ng {cap} 2>/dev/null", timeout=30)
     n = 0
-    for line in r.stdout.splitlines():
-        low = line.lower()
-        if "handshake" in low and ("1 handshake" in low or "wpa (" in low):
-            n += 1
-    if n == 0:
-        tmp = f"{WORK}/_probe.hc22000"
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-        _sh(f"hcxpcapngtool -o {tmp} {cap} 2>/dev/null", timeout=30)
-        if os.path.exists(tmp):
-            with open(tmp) as f:
-                n = sum(1 for _ in f)
+    tmp = f"{WORK}/_probe.hc22000"
+    try:
+        os.remove(tmp)
+    except OSError:
+        pass
+    _sh(f"hcxpcapngtool -o {tmp} {cap} 2>/dev/null", timeout=30)
+    if os.path.exists(tmp) and os.path.getsize(tmp) > 0:
+        with open(tmp) as f:
+            n = sum(1 for ln in f if ln.strip())
     _last_hs.update(ts=now, n=n)
     return n
 
