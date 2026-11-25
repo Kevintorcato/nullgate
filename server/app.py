@@ -118,7 +118,7 @@ def hotspot_config():
     if request.method == "POST":
         d = request.json or {}
         c = m_hotspot.save_cfg(ssid=d.get("ssid"), password=d.get("password"),
-                               iface=d.get("iface"))
+                               iface=d.get("iface"), watchdog_min=d.get("watchdog_min"))
         return jsonify({"ok": True, **c})
     return jsonify({"ok": True, **m_hotspot.load_cfg()})
 

@@ -52,11 +52,14 @@ def hotspot_menu():
         print(f"  Status: {'>> LIGADO <<' if s.get('ativo') else 'desligado'}")
         print(f"  SSID  : {s.get('ssid', '?')}")
         print(f"  Senha : {s.get('senha', '?')}")
+        wd = s.get("watchdog_min", 15)
+        print(f"  Auto-off: {str(wd) + ' min' if wd else 'desligado'}")
         print("-" * 30)
         print("  1) Editar SSID")
         print("  2) Editar senha")
         print("  3) LIGAR hotspot")
         print("  4) Desligar hotspot")
+        print("  5) Tempo auto-off (min)")
         print("  0) Sair")
         op = input("  > ").strip()
         if op == "1":
@@ -78,6 +81,13 @@ def hotspot_menu():
         elif op == "4":
             _req("/api/hotspot/stop", {})
             print("  desligado.")
+        elif op == "5":
+            v = input("  Minutos (0 = nunca): ").strip()
+            try:
+                _req("/api/hotspot/config", {"watchdog_min": int(v)})
+                print("  salvo.")
+            except ValueError:
+                print("  numero invalido.")
         elif op == "0":
             break
         else:

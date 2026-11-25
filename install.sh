@@ -12,8 +12,10 @@ echo "== Nullgate installer =="
 echo "[1/5] dependencias..."
 apt-get update -qq
 apt-get install -y -qq python3 python3-flask git \
-  aircrack-ng hcxtools hcxdumptool tcpdump iw nmap >/dev/null 2>&1 || \
-  apt-get install -y python3 python3-flask git aircrack-ng hcxtools hcxdumptool tcpdump iw nmap
+  aircrack-ng hcxtools hcxdumptool tcpdump iw nmap hostapd dnsmasq curl >/dev/null 2>&1 || \
+  apt-get install -y python3 python3-flask git aircrack-ng hcxtools hcxdumptool tcpdump iw nmap hostapd dnsmasq curl
+# hostapd/dnsmasq ficam desabilitados no boot (o Nullgate os chama sob demanda)
+systemctl disable --now hostapd dnsmasq >/dev/null 2>&1 || true
 
 # 2) codigo
 echo "[2/5] codigo..."
