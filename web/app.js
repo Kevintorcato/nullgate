@@ -251,30 +251,86 @@ async function startWps(net) {
   pollWps(net, bssid);
 }
 
+let _wpsT0 = 0;
+function _wpsFmtTempo(ms) {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  return (m > 0 ? m + "m " : "") + (s % 60) + "s";
+}
+function _wpsLogHtml(log) {
+  if (!log) return "<span class=\"muted\">aguardando saida do reaver...</span>";
+  return log.split("\n").map((ln) => {
+    let cls = "";
+    if (/\[\+\]/.test(ln)) cls = "wps-ok";
+    else if (/\[-\]|fail|error|failed/i.test(ln)) cls = "wps-err";
+    else if (/\[!\]|warn|lock/i.test(ln)) cls = "wps-warn";
+    else if (/PIN|PSK|WPA|key/i.test(ln)) cls = "wps-hit";
+    return "<div class=\"wps-ln " + cls + "\">" + esc(ln) + "</div>";
+  }).join("");
+}
 function viewWps(net, bssid) {
-  $("#analyzeOut").innerHTML = '<div class="card" style="margin-top:8px"><h3>WPS - ' + esc(bssid) + '</h3><div class="kv"><span class="k">Estado</span><span class="v" id="wpsState">rodando...</span></div><div class="kv"><span class="k">PIN</span><span class="v" id="wpsPin">-</span></div><div class="kv"><span class="k">PSK</span><span class="v" id="wpsPsk">-</span></div><pre id="wpsLog" class="muted" style="max-height:180px;overflow:auto;font-size:11px;margin-top:8px"></pre><button class="btn danger" id="btnWpsStop" style="margin-top:8px">Parar WPS</button></div>';
+  _wpsT0 = Date.now();
+  $("#analyzeOut").innerHTML =
+    "<div class=\"card wps-card\" style=\"margin-top:8px\">" +
+      "<div class=\"wps-head\"><h3>🔑 Ataque WPS</h3><span class=\"wps-badge wps-run\" id=\"wpsBadge\">🔄 rodando</span></div>" +
+      "<div class=\"kv\"><span class=\"k\">Alvo</span><span class=\"v mono\">" + esc(bssid) + "</span></div>" +
+      "<div class=\"kv\"><span class=\"k\">Tempo</span><span class=\"v\" id=\"wpsTempo\">0s</span></div>" +
+      "<div class=\"wps-bar\" id=\"wpsBar\"><div></div></div>" +
+      "<div class=\"wps-results\">" +
+        "<div class=\"wps-res\" id=\"wpsResPin\"><span class=\"wps-res-lbl\">PIN</span><span class=\"wps-res-val\" id=\"wpsPin\">-</span></div>" +
+        "<div class=\"wps-res\" id=\"wpsResPsk\"><span class=\"wps-res-lbl\">PSK</span><span class=\"wps-res-val\" id=\"wpsPsk\">-</span></div>" +
+      "</div>" +
+      "<div class=\"wps-logwrap\"><div class=\"wps-loghead\">log do reaver</div><div id=\"wpsLog\" class=\"wps-log\"></div></div>" +
+      "<div class=\"wps-actions\"><button class=\"btn danger\" id=\"btnWpsStop\">⏹ Parar</button><button class=\"btn\" id=\"btnWpsCopy\" style=\"display:none\">📋 Copiar PIN/PSK</button></div>" +
+    "</div>";
   $("#btnWpsStop").onclick = () => stopWps(net);
+  $("#btnWpsCopy").onclick = () => {
+    const pin = $("#wpsPin").textContent, psk = $("#wpsPsk").textContent;
+    navigator.clipboard && navigator.clipboard.writeText("PIN=" + pin + " PSK=" + psk);
+    toast("copiado");
+  };
 }
 
 async function pollWps(net, bssid) {
   const r = await get("/api/wifi/wps/status");
   if (!r.ok) return;
-  const st = $("#wpsState");
+  const st = $("#wpsBadge");
   if (!st) return;
-  if (r.pin) $("#wpsPin").textContent = r.pin;
-  if (r.psk) $("#wpsPsk").textContent = r.psk;
-  if (r.log) $("#wpsLog").textContent = r.log;
-  if (r.sucesso) { st.textContent = "SUCESSO"; toast("WPS quebrado! PIN=" + (r.pin || "?") + " PSK=" + (r.psk || "?")); return; }
-  if (!r.rodando) { st.textContent = "parado"; return; }
-  st.textContent = "rodando...";
-  setTimeout(() => pollWps(net, bssid), 3000);
+  if (r.pin) { $("#wpsPin").textContent = r.pin; $("#wpsResPin").classList.add("hit"); }
+  if (r.psk) { $("#wpsPsk").textContent = r.psk; $("#wpsResPsk").classList.add("hit"); }
+  if (r.log) {
+    const lg = $("#wpsLog");
+    const atBottom = lg.scrollTop + lg.clientHeight >= lg.scrollHeight - 20;
+    lg.innerHTML = _wpsLogHtml(r.log);
+    if (atBottom) lg.scrollTop = lg.scrollHeight;
+  }
+  const tEl = $("#wpsTempo");
+  if (tEl) tEl.textContent = _wpsFmtTempo(Date.now() - _wpsT0);
+
+  if (r.sucesso) {
+    st.className = "wps-badge wps-done"; st.textContent = "✅ SUCESSO";
+    $("#wpsBar").style.display = "none";
+    $("#btnWpsStop").style.display = "none";
+    $("#btnWpsCopy").style.display = "";
+    toast("WPS quebrado! PIN=" + (r.pin || "?") + " PSK=" + (r.psk || "?"));
+    return;
+  }
+  if (!r.rodando) {
+    st.className = "wps-badge wps-stop"; st.textContent = "⏹ parado";
+    $("#wpsBar").style.display = "none";
+    $("#btnWpsStop").style.display = "none";
+    return;
+  }
+  setTimeout(() => pollWps(net, bssid), 2000);
 }
 
 async function stopWps(net) {
   const r = await post("/api/wifi/wps/stop", {});
   toast(r.msg || "parado");
-  const st = $("#wpsState");
-  if (st) st.textContent = "parado";
+  const st = $("#wpsBadge");
+  if (st) { st.className = "wps-badge wps-stop"; st.textContent = "⏹ parado"; }
+  const bar = $("#wpsBar"); if (bar) bar.style.display = "none";
+  const b = $("#btnWpsStop"); if (b) b.style.display = "none";
 }
 
 function targetBssids(net) {

@@ -164,3 +164,31 @@ nav#tabs .ic{display:block;font-size:18px;margin-bottom:2px}
 #toast.show{opacity:1}
 .muted{color:var(--mut)}
 .center{text-align:center;padding:30px 10px;color:var(--mut)}
+
+/* ===== WPS UI ===== */
+.wps-card{border:1px solid var(--line,#2a2a2a)}
+.wps-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+.wps-head h3{margin:0}
+.wps-badge{font-size:12px;padding:3px 10px;border-radius:999px;font-weight:600;white-space:nowrap}
+.wps-run{background:rgba(80,160,255,.15);color:#5aa0ff;border:1px solid #5aa0ff;animation:wpsPulse 1.4s ease-in-out infinite}
+.wps-done{background:rgba(60,200,120,.18);color:#3cc878;border:1px solid #3cc878}
+.wps-stop{background:rgba(160,160,160,.15);color:#aaa;border:1px solid #888}
+@keyframes wpsPulse{0%,100%{opacity:1}50%{opacity:.45}}
+.wps-bar{height:4px;border-radius:4px;background:rgba(255,255,255,.08);overflow:hidden;margin:10px 0}
+.wps-bar>div{height:100%;width:40%;border-radius:4px;background:linear-gradient(90deg,#5aa0ff,#3cc878);animation:wpsSlide 1.2s ease-in-out infinite}
+@keyframes wpsSlide{0%{transform:translateX(-100%)}100%{transform:translateX(350%)}}
+.wps-results{display:flex;gap:10px;margin:10px 0}
+.wps-res{flex:1;background:rgba(255,255,255,.04);border:1px solid var(--line,#2a2a2a);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:2px;transition:all .3s}
+.wps-res.hit{background:rgba(60,200,120,.12);border-color:#3cc878;box-shadow:0 0 0 1px #3cc878 inset}
+.wps-res-lbl{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#888}
+.wps-res-val{font-family:monospace;font-size:15px;font-weight:600;word-break:break-all}
+.wps-res.hit .wps-res-val{color:#3cc878}
+.wps-logwrap{margin-top:8px}
+.wps-loghead{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#888;margin-bottom:4px}
+.wps-log{max-height:200px;overflow:auto;background:#0d0d0d;border:1px solid var(--line,#2a2a2a);border-radius:6px;padding:8px;font-family:monospace;font-size:11px;line-height:1.5}
+.wps-ln{white-space:pre-wrap;word-break:break-all}
+.wps-ok{color:#3cc878}
+.wps-err{color:#ff5a5a}
+.wps-warn{color:#ffb84d}
+.wps-hit{color:#5aa0ff;font-weight:600}
+.wps-actions{display:flex;gap:8px;margin-top:10px}
