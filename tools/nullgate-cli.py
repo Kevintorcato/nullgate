@@ -9,22 +9,37 @@ Uso no CLI do Zero:  nullgate
 """
 import json
 import sys
+import time
+import traceback
 import urllib.request
 
 API = "http://127.0.0.1:8080"
+LOG = "/tmp/nullgate-cli.log"
+
+
+def _log(msg):
+    try:
+        with open(LOG, "a") as f:
+            f.write(f"{time.strftime('%H:%M:%S')} {msg}\n")
+    except OSError:
+        pass
 
 
 def _req(path, data=None):
     url = API + path
+    _log(f"REQ {'POST' if data is not None else 'GET'} {path} data={data}")
     try:
         if data is not None:
             body = json.dumps(data).encode()
             r = urllib.request.Request(url, body, {"Content-Type": "application/json"}, method="POST")
         else:
             r = urllib.request.Request(url)
-        with urllib.request.urlopen(r, timeout=40) as resp:
-            return json.loads(resp.read().decode())
+        with urllib.request.urlopen(r, timeout=60) as resp:
+            out = json.loads(resp.read().decode())
+            _log(f"RESP {path} -> {out}")
+            return out
     except Exception as e:
+        _log(f"ERRO {path} -> {type(e).__name__}: {e}")
         return {"ok": False, "error": str(e)}
 
 
@@ -70,8 +85,14 @@ def hotspot_menu():
 
 
 if __name__ == "__main__":
+    _log("=== nullgate cli iniciado ===")
     try:
         hotspot_menu()
     except (KeyboardInterrupt, EOFError):
         print("\ntchau")
         sys.exit(0)
+    except Exception as e:
+        _log("CRASH: " + traceback.format_exc())
+        print(f"  erro: {e}")
+        print(f"  (log em {LOG})")
+        sys.exit(1)
