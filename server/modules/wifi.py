@@ -647,7 +647,7 @@ def _wps_cmd(iface, bssid, ch, fase):
         return ("reaver -i %s -b %s %s-vvv -d 1 -T 5 -r 3:15 -l 60 -S -N"
                 % (iface, bssid, c))
     if fase == "bully":
-        return ("bully -b %s %s-d -v 3 -S -F -B" % (bssid, c))
+        return ("bully %s -b %s %s-d -v 3 -S -F -B" % (iface, bssid, c))
     return None
 
 
