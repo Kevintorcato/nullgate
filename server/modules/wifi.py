@@ -14,7 +14,7 @@ import subprocess
 import time
 
 DEFAULT_RADIO = os.environ.get("NULLGATE_RADIO", "wlan1")
-WORK = "/tmp/nullgate"
+WORK = "/tmp/nullgate/work"
 DATA = "/opt/nullgate/data"
 STORE = f"{DATA}/networks.json"
 os.makedirs(WORK, exist_ok=True)
@@ -38,6 +38,7 @@ _last_hs = {"ts": 0, "n": 0}
 def _cap_file():
     files = glob.glob(f"{WORK}/cap-*.cap") + glob.glob(f"{WORK}/cap-*.pcap") + glob.glob(f"{WORK}/cap-*.pcapng")
     files.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+    return files[0] if files else None
 
 
 def _slug(s):
@@ -424,6 +425,7 @@ def capture_start(bssids, channels, iface=None, mode="ativo", essid=None, client
     if not multi:
         _sh(f"iw dev {iface} set channel {ch} HT20", timeout=8)
     _last_hs.update(ts=0, n=0)
+    _capture["saved"] = None
     airo_args = ["airodump-ng", "-w", f"{WORK}/cap", "--output-format", "pcap"]
     if not multi:
         airo_args += ["-c", ch, "--bssid", bssid]
@@ -517,6 +519,36 @@ def delete_file(name):
     return {"ok": True}
 
 
+def _autosave_on_hs():
+    """Se ha handshake na captura atual, para tudo e persiste pcap + hc22000."""
+    if _capture.get("saved"):
+        return _capture["saved"]
+    cap = _cap_file()
+    if not cap or not os.path.exists(cap):
+        return None
+    hs = _count_handshakes(cap, force=True)
+    if hs <= 0:
+        return None
+    _kill_proc(_capture.get("deauth"))
+    _kill_proc(_capture.get("proc"))
+    _capture["deauth"] = None
+    iface = _capture.get("iface") or DEFAULT_RADIO
+    _cleanup_iface(iface)
+    _set_managed(iface)
+    label = _capture.get("essid") or "rede"
+    saved = {"handshakes": hs, "pcap": _persist(cap, label), "hc22000": None}
+    out = f"{WORK}/nullgate.hc22000"
+    try:
+        os.remove(out)
+    except OSError:
+        pass
+    _sh(f"hcxpcapngtool -o {out} {cap}", timeout=60)
+    if os.path.exists(out) and os.path.getsize(out) > 0:
+        saved["hc22000"] = _persist(out, label)
+    _capture["saved"] = saved
+    return saved
+
+
 def capture_status():
     proc = _capture["proc"]
     running = bool(proc and proc.poll() is None)
@@ -524,6 +556,10 @@ def capture_status():
     cap = _cap_file()
     size = os.path.getsize(cap) if cap and os.path.exists(cap) else 0
     handshakes = _count_handshakes(cap) if cap and size > 0 else 0
+    saved = None
+    if handshakes > 0 and not _capture.get("saved"):
+        saved = _autosave_on_hs()
+        running = False
     return {
         "ok": True,
         "rodando": running,
@@ -531,6 +567,7 @@ def capture_status():
         "bytes": size,
         "handshakes": handshakes,
         "alvos": _capture["targets"],
+        "salvo": _capture.get("saved"),
     }
 
 
@@ -584,7 +621,11 @@ def capture_stop():
     _set_managed(iface)
     cap = _cap_file()
     hs = _count_handshakes(cap, force=True) if cap else 0
-    return {"ok": True, "msg": "captura parada", "handshakes": hs, "iface": iface}
+    saved = _capture.get("saved")
+    if hs > 0 and not saved:
+        saved = _autosave_on_hs()
+    return {"ok": True, "msg": "captura parada", "handshakes": hs,
+            "iface": iface, "salvo": saved}
 
 
 def export_hc22000():
