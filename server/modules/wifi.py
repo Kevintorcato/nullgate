@@ -36,8 +36,8 @@ _last_hs = {"ts": 0, "n": 0}
 
 
 def _cap_file():
-    files = sorted(glob.glob(f"{WORK}/cap-*.cap"))
-    return files[-1] if files else None
+    files = glob.glob(f"{WORK}/cap-*.cap") + glob.glob(f"{WORK}/cap-*.pcap") + glob.glob(f"{WORK}/cap-*.pcapng")
+    files.sort(key=lambda p: os.path.getmtime(p), reverse=True)
 
 
 def _slug(s):
