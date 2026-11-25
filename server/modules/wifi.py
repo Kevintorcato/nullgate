@@ -427,10 +427,15 @@ def capture_start(bssids, channels, iface=None, mode="ativo", essid=None, client
     _sh(f"iw dev {iface} set channel {ch} HT20", timeout=8)
     _last_hs.update(ts=0, n=0)
     _capture["saved"] = None
+    # a TELA do airodump (tabelas ANSI que atualizam) ia pro airo.log e crescia
+    # sem limite ate encher o /tmp (tmpfs/RAM de 208M) - ai nada mais gravava
+    # (nem o .cap nem o .hc22000). Agora vai pro /dev/null. O CSV (pequeno, gira
+    # com --write-interval) da os clientes conectados sem encher nada.
     airo = subprocess.Popen(
         ["airodump-ng", "-c", ch, "--bssid", bssid,
-         "-w", f"{WORK}/cap", "--output-format", "pcap", iface],
-        stdout=open(f"{WORK}/airo.log", "w"), stderr=subprocess.STDOUT,
+         "-w", f"{WORK}/cap", "--output-format", "pcap,csv",
+         "--write-interval", "5", iface],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         preexec_fn=os.setsid,
     )
     deauth_proc = None
