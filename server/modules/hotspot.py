@@ -89,6 +89,12 @@ def _reassume_nm(iface):
     """Devolve a interface ao NetworkManager e reconecta na rede da loja."""
     _sh(f"pkill -f 'dnsmasq.*{iface}' 2>/dev/null")
     _sh("pkill -x hostapd 2>/dev/null")
+    # remove o redirect da porta 80 (repete o -D ate limpar duplicatas)
+    for _ in range(4):
+        r = _sh(f"iptables -t nat -D PREROUTING -i {iface} -p tcp --dport 80 "
+                f"-j REDIRECT --to-ports 8080 2>/dev/null")
+        if r.returncode != 0:
+            break
     _sh(f"ip addr flush dev {iface} 2>/dev/null")
     _sh(f"iw dev {iface} set type managed 2>/dev/null")
     _sh(f"nmcli dev set {iface} managed yes 2>/dev/null")
@@ -139,10 +145,13 @@ def start(iface=None, ssid=None, password=None):
         _reassume_nm(iface)
         return {"ok": False, "error": "hostapd nao subiu (driver recusou modo AP). Rede devolvida ao NM."}
 
-    # DHCP pros clientes
+    # DHCP + DNS que resolve todo dominio pro Card (captive portal)
     _sh(f"dnsmasq --interface={iface} --bind-interfaces --except-interface=lo "
         f"--dhcp-range=10.42.0.10,10.42.0.50,12h --dhcp-option=3,{GW} "
-        f"--dhcp-option=6,{GW} --pid-file={DNSMASQ_PID}")
+        f"--dhcp-option=6,{GW} --address=/#/{GW} --pid-file={DNSMASQ_PID}")
+    # redireciona a porta 80 (onde o SO testa a internet) pro Flask na 8080
+    _sh(f"iptables -t nat -A PREROUTING -i {iface} -p tcp --dport 80 "
+        f"-j REDIRECT --to-ports 8080")
 
     _arm_watchdog(cfg.get("watchdog_min", 15))
     wd = cfg.get("watchdog_min", 15)

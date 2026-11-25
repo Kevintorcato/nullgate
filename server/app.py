@@ -9,7 +9,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, redirect
 
 from modules import system as m_system
 from modules import wifi as m_wifi
@@ -26,6 +26,25 @@ BG_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 app = Flask(__name__, static_folder=None)
 
 
+# ---------- captive portal ----------
+# Quando o hotspot esta no ar, o SO do celular testa a internet acessando estes
+# enderecos. Respondendo com redirect pro painel, o celular abre a pagina sozinho.
+PORTAL = "http://10.42.0.1:8080/"
+
+
+@app.route("/generate_204")
+@app.route("/gen_204")
+@app.route("/hotspot-detect.html")
+@app.route("/library/test/success.html")
+@app.route("/ncsi.txt")
+@app.route("/connecttest.txt")
+@app.route("/canonical.html")
+@app.route("/success.txt")
+@app.route("/redirect")
+def captive_probe():
+    return redirect(PORTAL, code=302)
+
+
 # ---------- UI estatica ----------
 @app.route("/")
 def index():
@@ -34,7 +53,11 @@ def index():
 
 @app.route("/<path:f>")
 def static_files(f):
-    return send_from_directory(WEB, f)
+    # arquivo real do painel -> serve; qualquer outra coisa (teste de captive de
+    # outro dominio sequestrado pelo DNS) -> manda pro painel
+    if (WEB / f).is_file():
+        return send_from_directory(WEB, f)
+    return redirect(PORTAL, code=302)
 
 
 # ---------- catalogo (dirige a UI) ----------
