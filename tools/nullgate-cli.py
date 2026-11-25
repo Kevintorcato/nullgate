@@ -58,10 +58,10 @@ def hotspot_menu():
                 print("  salvo.")
         elif op == "3":
             print("  ligando (a conexao atual vai cair)...")
-            r = _req("/api/hotspot/start")
+            r = _req("/api/hotspot/start", {})
             print("  " + (r.get("dica") or r.get("error") or "ok"))
         elif op == "4":
-            _req("/api/hotspot/stop")
+            _req("/api/hotspot/stop", {})
             print("  desligado.")
         elif op == "0":
             break
