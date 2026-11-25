@@ -310,7 +310,7 @@ def recon(essid, bssids, channels, iface=None):
     _set_monitor(iface)
     try:
         _sh(
-            f"timeout 12 airodump-ng {iface} -c {",".join(chans)} "
+            f"timeout 12 airodump-ng {iface} -c {','.join(chans)} "
             f"-w {WORK}/recon --output-format csv --write-interval 3 >/dev/null 2>&1",
             timeout=20,
         )
