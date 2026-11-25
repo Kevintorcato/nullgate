@@ -641,7 +641,7 @@ def _wps_parse():
 def _wps_cmd(iface, bssid, ch, fase):
     c = ("-c %d " % int(ch)) if ch else ""
     if fase == "pixie":
-        return ("reaver -i %s -b %s %s-K 1 -N -vvv -d 1 -T 5 -r 3:15 -l 60 -S --pixie-force"
+        return ("reaver -i %s -b %s %s-K 1 -N -vvv -d 1 -T 5 -r 3:15 -l 60 -S"
                 % (iface, bssid, c))
     if fase == "pin":
         return ("reaver -i %s -b %s %s-vvv -d 1 -T 5 -r 3:15 -l 60 -S -N"
