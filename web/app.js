@@ -292,7 +292,7 @@ function viewWps(net, bssid) {
 }
 
 async function pollWps(net, bssid) {
-  const r = await get("/api/wifi/wps/status");
+  const r = await api("/api/wifi/wps/status");
   if (!r.ok) return;
   const st = $("#wpsBadge");
   if (!st) return;
