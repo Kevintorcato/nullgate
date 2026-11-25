@@ -7,7 +7,7 @@ const post = (path, body) =>
 const esc = (s) => (s || "").toString().replace(/[&<>"]/g,
   (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[m]));
 
-const ICON = { wifi: "📶", bt: "🔵", cpu: "🖥️", network: "🌐", config: "⚙️", info: "ℹ️", files: "📁" };
+const ICON = { wifi: "📶", bt: "🔵", cpu: "🖥️", network: "🌐", config: "⚙️", info: "ℹ️", files: "📁", logs: "📜" };
 let CAT = null, SCAN = [], CURRENT = "wifi", capTimer = null, feedTimer = null, capturing = false;
 let IFACES = [], IFACE = localStorage.getItem("ng_iface") || "wlan1";
 
@@ -97,6 +97,7 @@ async function boot() {
     { id: "rede", title: "Rede", icon: "network" },
     { id: "files", title: "Arquivos", icon: "files" },
     { id: "sistema", title: "Sistema", icon: "cpu" },
+    { id: "logs", title: "Logs", icon: "logs" },
     { id: "config", title: "Config", icon: "config" },
   ];
   $("#tabs").innerHTML = secs.map((s) =>
@@ -127,7 +128,7 @@ function go(sec) {
   $("#tabs").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.sec === sec));
   if (capTimer) { clearInterval(capTimer); capTimer = null; } if (feedTimer) { clearInterval(feedTimer); feedTimer = null; }
   if (capturing) { capturing = false; post("/api/wifi/capture/stop").catch(() => {}); }  // nao deixa a placa presa
-  ({ wifi: viewWifi, bt: viewBt, rede: viewRede, files: viewFiles, sistema: viewSystem, config: viewConfig }[sec] || viewWifi)();
+  ({ wifi: viewWifi, bt: viewBt, rede: viewRede, files: viewFiles, sistema: viewSystem, logs: viewLogs, config: viewConfig }[sec] || viewWifi)();
 }
 
 /* ---------------- WiFi ---------------- */
@@ -455,6 +456,38 @@ function openAction(a) {
     const r = await post("/api/run", { id: a.id, fields });
     o.textContent = r.ok ? (r.stdout || r.stderr || "(sem saída)") : (r.error || "erro");
   };
+}
+
+/* ---------------- Logs ---------------- */
+let LOGMOD = localStorage.getItem("ng_logmod") || "wifi";
+async function viewLogs() {
+  const kb = (b) => b > 1048576 ? (b / 1048576).toFixed(1) + " MB" : (b / 1024).toFixed(1) + " KB";
+  $("#view").innerHTML = `<div class="center"><span class="spin"></span>carregando…</div>`;
+  const meta = await api("/api/logs");
+  const mods = meta.logs || [];
+  if (!mods.find((m) => m.modulo === LOGMOD) && mods[0]) LOGMOD = mods[0].modulo;
+  const tabs = mods.map((m) =>
+    `<button class="btn ${m.modulo === LOGMOD ? "" : "sec"}" data-m="${m.modulo}">${esc(m.modulo)} · ${kb(m.bytes)}</button>`).join("");
+  const data = await api("/api/logs/" + LOGMOD);
+  $("#view").innerHTML = `
+    <div class="card"><h3>Logs por módulo</h3>
+      <div class="muted" style="margin-bottom:8px">Cada módulo tem no máx. 2 MB (gira sozinho). Data e hora em cada linha.</div>
+      <div class="row" id="logTabs" style="flex-wrap:wrap;gap:6px;margin-bottom:10px">${tabs}</div>
+      <pre id="logBox" style="background:#000;color:#9f9;padding:10px;border-radius:8px;max-height:52vh;overflow:auto;white-space:pre-wrap;word-break:break-word;font-size:11px;margin:0">${esc(data.texto || "(vazio)")}</pre>
+      <div class="row" style="margin-top:10px;flex-wrap:wrap;gap:6px">
+        <button class="btn" id="logReload">Atualizar</button>
+        <a class="btn sec" id="logDl" href="/api/logs/${LOGMOD}/download">Baixar</a>
+        <button class="btn danger" id="logClr">Limpar ${esc(LOGMOD)}</button>
+      </div>
+    </div>`;
+  $("#logTabs").querySelectorAll("button").forEach((b) =>
+    b.onclick = () => { LOGMOD = b.dataset.m; localStorage.setItem("ng_logmod", LOGMOD); viewLogs(); });
+  $("#logReload").onclick = viewLogs;
+  $("#logClr").onclick = async () => {
+    await post("/api/logs/clear", { modulo: LOGMOD });
+    toast("log de " + LOGMOD + " limpo"); viewLogs();
+  };
+  const box = $("#logBox"); if (box) box.scrollTop = box.scrollHeight;
 }
 
 /* ---------------- Config / Hotspot ---------------- */

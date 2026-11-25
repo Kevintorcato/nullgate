@@ -11,10 +11,13 @@ import subprocess
 from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory, redirect
 
+import traceback
+
 from modules import system as m_system
 from modules import wifi as m_wifi
 from modules import hotspot as m_hotspot
 from modules import bluetooth as m_bt
+from modules import log as m_log
 
 BASE = Path(__file__).resolve().parent
 WEB = BASE.parent / "web"
@@ -24,6 +27,87 @@ BG_DIR.mkdir(exist_ok=True)
 BG_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 
 app = Flask(__name__, static_folder=None)
+
+
+# ---------- log automatico por modulo ----------
+def _mod_do_path(p):
+    if p.startswith("/api/wifi"):
+        return "wifi"
+    if p.startswith("/api/bt") or "bluetooth" in p:
+        return "bluetooth"
+    return "sistema"
+
+
+def _resumo_body():
+    try:
+        d = request.get_json(silent=True) or {}
+    except Exception:
+        return ""
+    chaves = ("essid", "bssid", "bssids", "iface", "ssid", "mode", "modo",
+              "channel", "channels", "seconds", "watchdog_min", "name", "cmd")
+    partes = [f"{k}={d[k]}" for k in chaves if k in d]
+    return " ".join(partes)
+
+
+@app.after_request
+def _log_acao(resp):
+    try:
+        p = request.path
+        if p.startswith("/api/") and not p.startswith("/api/logs"):
+            # loga acoes (POST) e qualquer erro; GET de status nao polui o log
+            if request.method == "POST" or resp.status_code >= 400:
+                lg = m_log.get_logger(_mod_do_path(p))
+                extra = _resumo_body()
+                # tenta extrair erro logico (ok:false) do corpo da resposta
+                err = ""
+                if resp.is_json:
+                    j = resp.get_json(silent=True) or {}
+                    if j.get("ok") is False:
+                        err = " FALHA: " + str(j.get("error", "?"))
+                lg.info("%s %s%s -> %s%s", request.method, p,
+                        (" " + extra) if extra else "", resp.status_code, err)
+    except Exception:
+        pass
+    return resp
+
+
+@app.errorhandler(Exception)
+def _log_erro(e):
+    from werkzeug.exceptions import HTTPException
+    if isinstance(e, HTTPException):
+        return e  # 404, redirect etc: deixa o Flask tratar normal
+    try:
+        m_log.get_logger(_mod_do_path(request.path)).error(
+            "EXCECAO %s %s: %s", request.method, request.path,
+            traceback.format_exc())
+    except Exception:
+        pass
+    return jsonify({"ok": False, "error": str(e)}), 500
+
+
+# ---------- rotas de log ----------
+@app.route("/api/logs")
+def logs_list():
+    return jsonify({"ok": True, "logs": m_log.listar()})
+
+
+@app.route("/api/logs/<mod>")
+def logs_read(mod):
+    return jsonify(m_log.ler(mod, linhas=int(request.args.get("linhas", 300))))
+
+
+@app.route("/api/logs/<mod>/download")
+def logs_download(mod):
+    r = m_log.ler(mod, linhas=10 ** 9)
+    from flask import Response
+    return Response(r.get("texto", ""), mimetype="text/plain",
+                    headers={"Content-Disposition": f"attachment; filename=nullgate-{r['modulo']}.log"})
+
+
+@app.route("/api/logs/clear", methods=["POST"])
+def logs_clear():
+    d = request.json or {}
+    return jsonify(m_log.limpar(d.get("modulo")))
 
 
 # ---------- captive portal ----------
@@ -259,4 +343,8 @@ def _run_catalog_action(action_id, fields):
 
 if __name__ == "__main__":
     # escuta em todas as interfaces locais (hotspot + rede local). Nunca exponha na internet.
+    try:
+        m_log.get_logger("sistema").info("Nullgate v%s iniciado", m_system.VERSION)
+    except Exception:
+        pass
     app.run(host="0.0.0.0", port=8080, threaded=True)
