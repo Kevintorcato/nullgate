@@ -297,6 +297,22 @@ def wifi_capture_stop():
     return jsonify(m_wifi.capture_stop())
 
 
+@app.route("/api/wifi/wps/start", methods=["POST"])
+def wifi_wps_start():
+    d = request.json or {}
+    return jsonify(m_wifi.wps_attack_start(d.get("bssid"), d.get("channel"), iface=d.get("iface"), essid=d.get("essid")))
+
+
+@app.route("/api/wifi/wps/status")
+def wifi_wps_status():
+    return jsonify(m_wifi.wps_attack_status())
+
+
+@app.route("/api/wifi/wps/stop", methods=["POST"])
+def wifi_wps_stop():
+    return jsonify(m_wifi.wps_attack_stop())
+
+
 @app.route("/api/wifi/reset", methods=["POST"])
 def wifi_reset():
     return jsonify(m_wifi.reset_radio((request.json or {}).get("iface")))

