@@ -3,7 +3,7 @@ import os
 import re
 import subprocess
 
-VERSION = "0.9.11"
+VERSION = "0.9.12"
 
 
 def _sh(cmd, timeout=8):

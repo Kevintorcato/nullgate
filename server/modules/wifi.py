@@ -505,7 +505,8 @@ def list_files():
             out.append({"nome": os.path.basename(p), "bytes": st.st_size,
                         "ts": int(st.st_mtime),
                         "tipo": "handshake" if p.endswith(".hc22000") else
-                                "captura" if p.endswith(".pcapng") else "arquivo"})
+                                "wps" if (os.path.basename(p).startswith("WPS_") and p.endswith(".txt")) else
+                                "captura" if (p.endswith(".pcapng") or p.endswith(".cap")) else "arquivo"})
         except OSError:
             pass
     out.sort(key=lambda x: x["ts"], reverse=True)
@@ -670,7 +671,28 @@ def _kill_proc(p):
 
 # ---------------- WPS attack (reaver PixieDust + PIN + bully) ----------------
 _wps = {"proc": None, "log": f"{WORK}/wps.log", "bssid": None, "iface": None,
-        "fase": None, "ch": None, "essid": None, "parar": False, "msg": None}
+        "fase": None, "ch": None, "essid": None, "parar": False, "msg": None,
+        "salvo": None}
+
+
+def _wps_save(pin, psk):
+    """Salva o resultado do WPS (PIN/PSK + infos da rede) num .txt junto com as
+    capturas, pra aparecer na aba Arquivos."""
+    label = _wps.get("essid") or "rede"
+    name = f"WPS_{_slug(label)}_{int(time.time())}.txt"
+    txt = ("=== Nullgate · Ataque WPS ===\n"
+           f"Rede (ESSID): {_wps.get('essid') or '?'}\n"
+           f"BSSID: {_wps.get('bssid')}\n"
+           f"Canal: {_wps.get('ch')}\n"
+           f"Data: {time.strftime('%d/%m/%Y %H:%M:%S')}\n"
+           f"PIN WPS: {pin or '?'}\n"
+           f"Senha (PSK): {psk or '?'}\n")
+    try:
+        with open(f"{CAPTURES}/{name}", "w") as f:
+            f.write(txt)
+        return name
+    except OSError:
+        return None
 
 # timeouts curtos: WPS em campo resolve rapido (pixie) ou nao resolve. PIN brute
 # completo e inviavel (AP trava), entao a deteccao de lock aborta antes do limite.
@@ -758,6 +780,10 @@ def _wps_orquestra():
         if _wps["parar"]:
             break
         if _wps_run_fase(fase):
+            pin, psk, _ = _wps_parse()
+            _wps["salvo"] = _wps_save(pin, psk)
+            with open(_wps["log"], "a", errors="replace") as f:
+                f.write(f"\n[+] SUCESSO - PIN={pin} PSK={psk} (salvo em {_wps['salvo']})\n")
             return
     if not _wps["parar"]:
         with open(_wps["log"], "a", errors="replace") as f:
@@ -778,7 +804,7 @@ def wps_attack_start(bssid, channel, iface=None, essid=None):
         pass
     _set_monitor(iface)
     _wps.update({"bssid": bssid, "iface": iface, "ch": channel, "essid": essid,
-                 "fase": "pixie", "parar": False, "msg": None})
+                 "fase": "pixie", "parar": False, "msg": None, "salvo": None})
     import threading
     t = threading.Thread(target=_wps_orquestra, daemon=True)
     t.start()
@@ -792,7 +818,8 @@ def wps_attack_status():
     pin, psk, done = _wps_parse()
     return {"ok": True, "rodando": running, "pin": pin, "psk": psk,
             "sucesso": done, "bssid": _wps["bssid"], "fase": _wps["fase"],
-            "aviso": _wps.get("msg"), "log": _wps_log_tail(30)}
+            "aviso": _wps.get("msg"), "salvo": _wps.get("salvo"),
+            "log": _wps_log_tail(30)}
 
 
 def wps_attack_stop():
@@ -804,7 +831,10 @@ def wps_attack_stop():
     _cleanup_iface(iface)
     _set_managed(iface)
     pin, psk, done = _wps_parse()
-    return {"ok": True, "msg": "ataque WPS parado", "pin": pin, "psk": psk, "sucesso": done}
+    if done and not _wps.get("salvo"):
+        _wps["salvo"] = _wps_save(pin, psk)
+    return {"ok": True, "msg": "ataque WPS parado", "pin": pin, "psk": psk,
+            "sucesso": done, "salvo": _wps.get("salvo")}
 
 def capture_stop():
     _kill_proc(_capture.get("deauth"))

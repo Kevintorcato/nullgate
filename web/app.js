@@ -312,6 +312,8 @@ async function pollWps(net, bssid) {
     $("#wpsBar").style.display = "none";
     $("#btnWpsStop").style.display = "none";
     $("#btnWpsCopy").style.display = "";
+    if (r.salvo) $("#wpsBadge").insertAdjacentHTML("afterend",
+      `<div class="okbox" style="margin-top:8px">💾 salvo em Arquivos: ${esc(r.salvo)}</div>`);
     toast("WPS quebrado! PIN=" + (r.pin || "?") + " PSK=" + (r.psk || "?"));
     return;
   }
@@ -700,7 +702,7 @@ async function viewFiles() {
   el.innerHTML = fs.map((f) => `
     <div class="item">
       <div class="it-main">
-        <div class="it-t">${f.tipo === "handshake" ? "🔑" : "📦"} ${esc(f.nome)}</div>
+        <div class="it-t">${f.tipo === "wps" ? "🔑" : f.tipo === "handshake" ? "🤝" : "📦"} ${esc(f.nome)}</div>
         <div class="it-s">${human(f.bytes)} · ${when(f.ts)}</div>
       </div>
       <div style="display:flex;gap:6px">
