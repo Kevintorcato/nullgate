@@ -549,6 +549,65 @@ def _autosave_on_hs():
     return saved
 
 
+def _capture_log(size, handshakes, elapsed):
+    """Log REAL da captura (nao animacao): le o CSV do airodump (AP alvo +
+    clientes conectados) e o deauth.log, e monta linhas legiveis do que esta
+    de fato acontecendo."""
+    linhas = []
+    tgt = (_capture.get("bssid") or "").lower()
+    ch = _capture.get("ch") or "?"
+    linhas.append(f"[{elapsed}s] monitor em {_capture.get('iface')} · canal {ch}")
+    linhas.append(f"alvo {_capture.get('bssid')} ({_capture.get('essid') or '?'})")
+    beacons = None
+    clientes = []
+    try:
+        csvs = sorted(glob.glob(f"{WORK}/cap-*.csv"))
+        if csvs:
+            with open(csvs[-1], errors="replace") as fh:
+                rows = list(csv.reader(fh))
+            in_st = False
+            for r in rows:
+                if r and "Station MAC" in r[0]:
+                    in_st = True
+                    continue
+                if not r or len(r) < 5:
+                    continue
+                if not in_st and ":" in r[0] and r[0].strip().lower() == tgt:
+                    beacons = r[9].strip() if len(r) > 9 else None
+                elif in_st and ":" in r[0]:
+                    assoc = r[5].strip().lower() if len(r) > 5 else ""
+                    if assoc == tgt:
+                        pk = r[4].strip() if len(r) > 4 else "?"
+                        clientes.append((r[0].strip(), pk))
+    except Exception:
+        pass
+    if beacons is not None:
+        linhas.append(f"AP visto · {beacons} beacons recebidos")
+    else:
+        linhas.append("AP ainda nao visto (sinal fraco? canal certo?)")
+    if clientes:
+        linhas.append(f"{len(clientes)} cliente(s) conectado(s):")
+        for mac, pk in clientes[:4]:
+            linhas.append(f"  • {mac} · {pk} pacotes")
+    else:
+        linhas.append("nenhum cliente conectado (sem cliente, sem handshake)")
+    # deauth real
+    dlog = f"{WORK}/deauth.log"
+    try:
+        if os.path.exists(dlog):
+            dl = [l.strip() for l in open(dlog, errors="replace") if "ACK" in l or "Sending" in l or "DeAuth" in l]
+            if dl:
+                linhas.append("deauth » " + dl[-1][:58])
+    except Exception:
+        pass
+    linhas.append(f"capturado: {size/1024:.1f} KB")
+    if handshakes > 0:
+        linhas.append(f"✅ HANDSHAKE capturado ({handshakes}) — pronto pra exportar")
+    else:
+        linhas.append("handshake: aguardando um cliente (re)conectar…")
+    return linhas
+
+
 def capture_status():
     proc = _capture["proc"]
     running = bool(proc and proc.poll() is None)
@@ -568,6 +627,7 @@ def capture_status():
         "handshakes": handshakes,
         "alvos": _capture["targets"],
         "salvo": _capture.get("saved"),
+        "log": _capture_log(size, handshakes, elapsed),
     }
 
 

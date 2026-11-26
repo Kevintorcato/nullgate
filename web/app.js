@@ -439,12 +439,6 @@ function viewCapture(net, mode) {
     </div><div id="exportBox"></div>`;
   $("#btnStop").onclick = stopCapture;
   $("#btnExport").onclick = doExport;
-  const feed = $("#capFeed");
-  feedTimer = setInterval(() => {
-    const d = document.createElement("div"); d.className = "fxl"; d.textContent = fxGarbage();
-    feed.appendChild(d); while (feed.children.length > 18) feed.removeChild(feed.firstChild);
-    feed.scrollTop = feed.scrollHeight;
-  }, 220);
   capturing = true;
   capTimer = setInterval(pollCapture, 3000); pollCapture();
 }
@@ -456,6 +450,19 @@ async function pollCapture() {
   $("#cH").textContent = s.handshakes;
   $("#btnExport").disabled = !(s.handshakes > 0);
   if (s.handshakes > 0) $("#cHint").innerHTML = "✅ Handshake capturado! Pode exportar.";
+  // log REAL (do airodump/deauth), nao animacao
+  const feed = $("#capFeed");
+  if (feed && s.log) {
+    const atBottom = feed.scrollTop + feed.clientHeight >= feed.scrollHeight - 20;
+    feed.innerHTML = s.log.map((ln) => {
+      let cls = "fxl";
+      if (/✅|HANDSHAKE/.test(ln)) cls += " wps-hit";
+      else if (/nenhum|nao visto|fraco/i.test(ln)) cls += " wps-warn";
+      else if (/cliente\(s\)|beacons|deauth/i.test(ln)) cls += " wps-ok";
+      return `<div class="${cls}">${esc(ln)}</div>`;
+    }).join("");
+    if (atBottom) feed.scrollTop = feed.scrollHeight;
+  }
   if (!s.rodando && capTimer) { clearInterval(capTimer); capTimer = null; }
 }
 async function stopCapture() {
