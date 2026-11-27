@@ -708,16 +708,24 @@ def _wps_log_tail(n=40):
 
 
 def _wps_parse():
+    """So conta como achado as linhas de SUCESSO real do reaver/bully, que vem
+    sempre no formato "[+] WPS PIN: 'xxxx'" / "[+] WPA PSK: 'xxxx'" no INICIO
+    da linha. O modo verboso (-vvv -d 1) imprime um monte de debug interno tipo
+    "WPS: Dev Password: 12345670<lixo binario>" e "WPS: PIN - hexdump_ascii(...)"
+    em toda tentativa (sucesso ou falha), e um regex solto pegava essas linhas
+    de debug como se fosse a senha quebrada - reportando sucesso falso mesmo
+    quando o AP respondeu WSC_NACK (tentativa rejeitada)."""
     import re
     txt = _wps_log_tail(400)
     pin = psk = None
-    m = re.search(r"(?:WPS PIN|Pin found|PIN)\s*[:=]\s*['\"]?(\d{4,8})", txt, re.I)
+    m = re.search(r"^\s*\[\+\]\s*WPS\s*PIN\s*:\s*['\"]?(\d{4,8})", txt, re.I | re.M)
     if m:
         pin = m.group(1)
-    m = re.search(r"(?:WPA PSK|PSK|Password)\s*[:=]\s*['\"]?([^\s'\"]+)", txt, re.I)
+    m = re.search(r"^\s*\[\+\]\s*WPA\s*PSK\s*:\s*['\"]?([^\s'\"]+)", txt, re.I | re.M)
     if m:
         psk = m.group(1)
-    done = bool(pin or psk) or ("WPS PIN:" in txt) or ("WPA PSK:" in txt)
+    # so fecha quando a SENHA real sai (PSK) - PIN sozinho e so progresso parcial
+    done = bool(psk)
     return pin, psk, done
 
 
