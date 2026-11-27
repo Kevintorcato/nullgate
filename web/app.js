@@ -712,6 +712,7 @@ async function viewConfig() {
       const sel = $("#staSsid");
       sel.innerHTML = `<option value="">— escolha —</option>` + r.redes.map((n) =>
         `<option value="${esc(n.ssid)}">${esc(n.ssid)} · ${esc(n.sinal)}% · ${esc(n.seg || "aberta")}</option>`).join("");
+      sel.onchange = () => { $("#staSsidManual").value = sel.value; };
       $("#staScanOut").textContent = `${r.redes.length} rede(s) encontrada(s)`;
     } else {
       $("#staScanOut").textContent = r.error || "nenhuma rede encontrada";
