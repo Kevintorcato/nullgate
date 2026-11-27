@@ -718,15 +718,22 @@ async function viewConfig() {
       $("#staScanOut").textContent = r.error || "nenhuma rede encontrada";
     }
   };
-  $("#staConnect").onclick = async () => {
+  $("#staConnect").onclick = async (ev) => {
+    const btn = ev.currentTarget;
+    if (btn.disabled) return; // evita clique duplo mandando 2 conexoes ao mesmo tempo (dava erro de race no nmcli)
     const ssid = $("#staSsidManual").value.trim() || $("#staSsid").value;
     if (!ssid) { toast("escolha ou digite o SSID"); return; }
+    btn.disabled = true;
     $("#staOut").innerHTML = `<div class="muted">conectando…</div>`;
-    const r = await post("/api/wifi/sta/connect", { ssid, password: $("#staPass").value || null });
-    $("#staOut").innerHTML = r.ok
-      ? `<div class="okbox">✅ ${esc(r.msg)}</div>`
-      : `<div class="warn">${esc(r.error || "falha ao conectar")}</div>`;
-    if (r.ok) { toast("wlan1 conectada"); viewConfig(); }
+    try {
+      const r = await post("/api/wifi/sta/connect", { ssid, password: $("#staPass").value || null });
+      $("#staOut").innerHTML = r.ok
+        ? `<div class="okbox">✅ ${esc(r.msg)}</div>`
+        : `<div class="warn">${esc(r.error || "falha ao conectar")}</div>`;
+      if (r.ok) { toast("wlan1 conectada"); viewConfig(); }
+    } finally {
+      btn.disabled = false;
+    }
   };
   $("#staDisc").onclick = async () => {
     const r = await post("/api/wifi/sta/disconnect");
