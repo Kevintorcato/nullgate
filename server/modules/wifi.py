@@ -58,7 +58,40 @@ def _radio_present(iface):
     return os.path.exists(f"/sys/class/net/{iface}")
 
 
+_NM_CONF_FILES = [
+    "/etc/NetworkManager/conf.d/10-nullgate-usb-wifi.conf",
+    "/etc/NetworkManager/conf.d/10-unmanage-usb-wifi.conf",
+]
+
+
+def _nm_wlan1_unmanaged(flag):
+    """Liga/desliga a regra do NetworkManager que marca o wlan1 como 'nao
+    gerenciado'. Essa regra e necessaria durante ataques (senao o NM fica
+    mexendo na interface e atrapalha monitor mode), mas ela TAMBEM bloqueia
+    o nmcli de escanear/conectar no modo cliente - mesmo com `managed yes`,
+    a regra do conf.d sempre ganha. Por isso alternamos ela conforme o modo:
+    flag=True  -> religa a protecao (modo ataque)
+    flag=False -> desliga a protecao, NM pode gerenciar o wlan1 (modo cliente)
+    """
+    changed = False
+    for path in _NM_CONF_FILES:
+        disabled = path + ".disabled"
+        try:
+            if flag and os.path.exists(disabled) and not os.path.exists(path):
+                os.rename(disabled, path)
+                changed = True
+            elif not flag and os.path.exists(path):
+                os.rename(path, disabled)
+                changed = True
+        except OSError:
+            pass
+    if changed:
+        _sh("systemctl reload NetworkManager || systemctl restart NetworkManager", timeout=15)
+        time.sleep(2)
+
+
 def _set_monitor(iface):
+    _nm_wlan1_unmanaged(True)
     _sh(f"ip link set {iface} down")
     _sh(f"iw dev {iface} set type monitor")
     _sh(f"ip link set {iface} up")
@@ -905,6 +938,7 @@ def stop_all_attacks(iface=None):
 def sta_scan(iface=None):
     """Lista redes que o wlan1 ve, pra escolher onde conectar."""
     iface = iface or DEFAULT_RADIO
+    _nm_wlan1_unmanaged(False)
     _sh(f"nmcli dev set {iface} managed yes", timeout=10)
     _set_managed(iface)
     _sh(f"nmcli dev wifi rescan ifname {iface}", timeout=20)
@@ -927,6 +961,7 @@ def sta_connect(ssid, password=None, iface=None):
     if not ssid:
         return {"ok": False, "error": "escolha a rede (SSID)"}
     stop_all_attacks(iface)
+    _nm_wlan1_unmanaged(False)
     _sh(f"nmcli dev set {iface} managed yes", timeout=10)
     _set_managed(iface)
     time.sleep(1)
@@ -954,4 +989,5 @@ def sta_disconnect(iface=None):
     iface = iface or DEFAULT_RADIO
     _sh(f"nmcli dev disconnect {iface}", timeout=15)
     _sh(f"nmcli dev set {iface} managed no", timeout=10)
+    _nm_wlan1_unmanaged(True)
     return {"ok": True, "msg": f"{iface} desconectada, de volta pro modo ataque"}
