@@ -877,3 +877,73 @@ def export_hc22000():
         "conteudo": content,
         "dica": "rode na GPU: hashcat -m 22000 nullgate.hc22000 wordlist.txt",
     }
+
+
+# ---------------- wlan1 como cliente (parar ataque + conectar numa rede) ----------------
+def stop_all_attacks(iface=None):
+    """Para captura, WPS e deauth; mata orfaos e volta a interface pra managed."""
+    iface = iface or DEFAULT_RADIO
+    _wps["parar"] = True
+    _kill_proc(_wps.get("proc"))
+    _kill_proc(_capture.get("deauth"))
+    _kill_proc(_capture.get("proc"))
+    _capture["proc"] = None
+    _capture["deauth"] = None
+    _cleanup_iface(iface)
+    _set_managed(iface)
+    return {"ok": True, "msg": "ataques parados"}
+
+
+def sta_scan(iface=None):
+    """Lista redes que o wlan1 ve, pra escolher onde conectar."""
+    iface = iface or DEFAULT_RADIO
+    _sh(f"nmcli dev set {iface} managed yes", timeout=10)
+    _set_managed(iface)
+    _sh(f"nmcli dev wifi rescan ifname {iface}", timeout=20)
+    r = _sh(f"nmcli -t -f SSID,SIGNAL,SECURITY dev wifi list ifname {iface}", timeout=15)
+    redes, seen = [], set()
+    for line in r.stdout.splitlines():
+        p = line.split(":")
+        ssid = p[0].strip() if p else ""
+        if ssid and ssid not in seen:
+            seen.add(ssid)
+            redes.append({"ssid": ssid, "sinal": p[1] if len(p) > 1 else "",
+                          "seg": p[2] if len(p) > 2 else ""})
+    redes.sort(key=lambda x: int(x["sinal"] or 0), reverse=True)
+    return {"ok": True, "redes": redes}
+
+
+def sta_connect(ssid, password=None, iface=None):
+    """Para os ataques e conecta o wlan1 como cliente numa rede escolhida."""
+    iface = iface or DEFAULT_RADIO
+    if not ssid:
+        return {"ok": False, "error": "escolha a rede (SSID)"}
+    stop_all_attacks(iface)
+    _sh(f"nmcli dev set {iface} managed yes", timeout=10)
+    _set_managed(iface)
+    time.sleep(1)
+    if password:
+        r = _sh(f"nmcli dev wifi connect '{ssid}' password '{password}' ifname {iface}", timeout=40)
+    else:
+        r = _sh(f"nmcli dev wifi connect '{ssid}' ifname {iface}", timeout=40)
+    time.sleep(2)
+    ip = _sh(f"ip -4 -br addr show {iface} | awk '{{print $3}}' | cut -d/ -f1").stdout.strip()
+    if ip:
+        return {"ok": True, "ssid": ssid, "ip": ip, "msg": f"conectado em {ssid} ({ip})"}
+    return {"ok": False, "ssid": ssid, "error": r.stderr.strip() or r.stdout.strip() or "falha ao conectar"}
+
+
+def sta_status(iface=None):
+    iface = iface or DEFAULT_RADIO
+    ip = _sh(f"ip -4 -br addr show {iface} | awk '{{print $3}}' | cut -d/ -f1").stdout.strip()
+    ssid = _sh(f"iw dev {iface} link 2>/dev/null | sed -n 's/.*SSID: //p'").stdout.strip()
+    return {"ok": True, "conectado": bool(ip and ssid), "ssid": ssid or None,
+            "ip": ip or None, "iface": iface}
+
+
+def sta_disconnect(iface=None):
+    """Desconecta o wlan1 e volta pro modo ataque (blindado do NM)."""
+    iface = iface or DEFAULT_RADIO
+    _sh(f"nmcli dev disconnect {iface}", timeout=15)
+    _sh(f"nmcli dev set {iface} managed no", timeout=10)
+    return {"ok": True, "msg": f"{iface} desconectada, de volta pro modo ataque"}

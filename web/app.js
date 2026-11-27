@@ -602,6 +602,7 @@ async function viewLogs() {
 async function viewConfig() {
   $("#view").innerHTML = `<div class="center"><span class="spin"></span>carregando…</div>`;
   const hs = await api("/api/hotspot/status");
+  const sta = await api("/api/wifi/sta/status");
   // hotspot só em interface managed (wlan0); a wlan1 é blindada pro ataque
   const hsIfaces = IFACES.filter((i) => i.nm !== false);
   const opts = (hsIfaces.length ? hsIfaces : IFACES).map((i) =>
@@ -647,6 +648,26 @@ async function viewConfig() {
         <button class="btn danger" id="hsOff">Desligar</button>
       </div>
       <div id="hsOut"></div>
+    </div>
+    <div class="card"><h3>wlan1 · modo cliente (parar ataques e conectar)</h3>
+      <div class="muted" style="margin-bottom:6px">Para os ataques (WPS/captura/deauth) e conecta a wlan1 numa rede escolhida, pra rodar scans e outros testes a partir dela.</div>
+      <div class="kv"><span class="k">Status</span><span class="v">
+        <span class="pill ${sta.conectado ? "on" : "off"}">${sta.conectado ? "conectado" : "desconectado"}</span>
+        ${sta.conectado ? esc(sta.ssid || "") + " · " + esc(sta.ip || "") : ""}</span></div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn sec" id="staScan">🔍 Escanear redes</button>
+      </div>
+      <div id="staScanOut" style="margin-top:8px"></div>
+      <label>Rede (SSID)</label>
+      <select id="staSsid"><option value="">— escaneie ou digite abaixo —</option></select>
+      <input id="staSsidManual" placeholder="ou digite o SSID manualmente" style="margin-top:6px">
+      <label>Senha (deixe em branco se a rede for aberta)</label>
+      <input id="staPass" placeholder="senha da rede">
+      <div class="row" style="margin-top:8px">
+        <button class="btn" id="staConnect">Parar ataques e conectar</button>
+        <button class="btn danger" id="staDisc">Desconectar (voltar pro ataque)</button>
+      </div>
+      <div id="staOut" style="margin-top:8px"></div>
     </div>`;
   bindIface();
   $("#btnReset").onclick = async () => {
@@ -684,6 +705,32 @@ async function viewConfig() {
     if (r.ok) toast("hotspot no ar");
   };
   $("#hsOff").onclick = async () => { const r = await post("/api/hotspot/stop"); toast(r.msg || "ok"); viewConfig(); };
+  $("#staScan").onclick = async () => {
+    $("#staScanOut").textContent = "escaneando…";
+    const r = await post("/api/wifi/sta/scan");
+    if (r.ok && r.redes && r.redes.length) {
+      const sel = $("#staSsid");
+      sel.innerHTML = `<option value="">— escolha —</option>` + r.redes.map((n) =>
+        `<option value="${esc(n.ssid)}">${esc(n.ssid)} · ${esc(n.sinal)}% · ${esc(n.seg || "aberta")}</option>`).join("");
+      $("#staScanOut").textContent = `${r.redes.length} rede(s) encontrada(s)`;
+    } else {
+      $("#staScanOut").textContent = r.error || "nenhuma rede encontrada";
+    }
+  };
+  $("#staConnect").onclick = async () => {
+    const ssid = $("#staSsidManual").value.trim() || $("#staSsid").value;
+    if (!ssid) { toast("escolha ou digite o SSID"); return; }
+    $("#staOut").innerHTML = `<div class="muted">conectando…</div>`;
+    const r = await post("/api/wifi/sta/connect", { ssid, password: $("#staPass").value || null });
+    $("#staOut").innerHTML = r.ok
+      ? `<div class="okbox">✅ ${esc(r.msg)}</div>`
+      : `<div class="warn">${esc(r.error || "falha ao conectar")}</div>`;
+    if (r.ok) { toast("wlan1 conectada"); viewConfig(); }
+  };
+  $("#staDisc").onclick = async () => {
+    const r = await post("/api/wifi/sta/disconnect");
+    toast(r.msg || "ok"); viewConfig();
+  };
 }
 
 /* ---------------- Arquivos salvos ---------------- */

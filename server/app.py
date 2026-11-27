@@ -318,6 +318,33 @@ def wifi_reset():
     return jsonify(m_wifi.reset_radio((request.json or {}).get("iface")))
 
 
+# --- wlan1 como cliente: parar ataques e conectar numa rede ---
+@app.route("/api/wifi/sta/scan", methods=["POST"])
+def wifi_sta_scan():
+    return jsonify(m_wifi.sta_scan((request.json or {}).get("iface")))
+
+
+@app.route("/api/wifi/sta/status")
+def wifi_sta_status():
+    return jsonify(m_wifi.sta_status(request.args.get("iface")))
+
+
+@app.route("/api/wifi/sta/connect", methods=["POST"])
+def wifi_sta_connect():
+    d = request.json or {}
+    return jsonify(m_wifi.sta_connect(d.get("ssid"), d.get("password"), d.get("iface")))
+
+
+@app.route("/api/wifi/sta/disconnect", methods=["POST"])
+def wifi_sta_disconnect():
+    return jsonify(m_wifi.sta_disconnect((request.json or {}).get("iface")))
+
+
+@app.route("/api/wifi/stop_all", methods=["POST"])
+def wifi_stop_all():
+    return jsonify(m_wifi.stop_all_attacks((request.json or {}).get("iface")))
+
+
 @app.route("/api/wifi/export")
 def wifi_export():
     return jsonify(m_wifi.export_hc22000())
