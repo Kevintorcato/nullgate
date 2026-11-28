@@ -18,6 +18,7 @@ from modules import wifi as m_wifi
 from modules import hotspot as m_hotspot
 from modules import bluetooth as m_bt
 from modules import log as m_log
+from modules import netscan as m_netscan
 
 BASE = Path(__file__).resolve().parent
 WEB = BASE.parent / "web"
@@ -35,6 +36,8 @@ def _mod_do_path(p):
         return "wifi"
     if p.startswith("/api/bt") or "bluetooth" in p:
         return "bluetooth"
+    if p.startswith("/api/scan"):
+        return "rede"
     return "sistema"
 
 
@@ -348,6 +351,52 @@ def wifi_stop_all():
 @app.route("/api/wifi/export")
 def wifi_export():
     return jsonify(m_wifi.export_hc22000())
+
+
+# ---------- scan de rede completo (descoberta + portas + deep-dive) ----------
+@app.route("/api/scan/network/start", methods=["POST"])
+def scan_network_start():
+    d = request.json or {}
+    return jsonify(m_netscan.start(d.get("target"), iface=d.get("iface"),
+                                   workers=d.get("workers", 150),
+                                   timeout_ms=d.get("timeout_ms", 600)))
+
+
+@app.route("/api/scan/network/status")
+def scan_network_status():
+    return jsonify(m_netscan.status(request.args.get("scan_id")))
+
+
+@app.route("/api/scan/network/result")
+def scan_network_result():
+    return jsonify(m_netscan.result(request.args.get("scan_id")))
+
+
+@app.route("/api/scan/network/cancel", methods=["POST"])
+def scan_network_cancel():
+    return jsonify(m_netscan.cancel())
+
+
+@app.route("/api/scan/network/list")
+def scan_network_list():
+    return jsonify(m_netscan.list_scans())
+
+
+# ---------- vuln scan manual (nunca automatico) ----------
+@app.route("/api/scan/vuln/start", methods=["POST"])
+def scan_vuln_start():
+    d = request.json or {}
+    return jsonify(m_netscan.vuln_start(d.get("ip"), ports=d.get("ports")))
+
+
+@app.route("/api/scan/vuln/status")
+def scan_vuln_status():
+    return jsonify(m_netscan.vuln_status(request.args.get("vuln_id")))
+
+
+@app.route("/api/scan/vuln/result")
+def scan_vuln_result():
+    return jsonify(m_netscan.vuln_result(request.args.get("vuln_id")))
 
 
 # ---------- acoes genericas do catalogo (nmap, etc) ----------

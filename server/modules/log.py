@@ -17,7 +17,7 @@ DATA = "/opt/nullgate/data"
 LOG_DIR = f"{DATA}/logs"
 MAX_BYTES = 2 * 1024 * 1024   # 2 MB por arquivo
 BACKUPS = 1                   # mantem 1 arquivo antigo (.1) -> ~4 MB/modulo no pior caso
-MODULOS = ("wifi", "bluetooth", "sistema")
+MODULOS = ("wifi", "bluetooth", "sistema", "rede")
 
 try:
     os.makedirs(LOG_DIR, exist_ok=True)

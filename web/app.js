@@ -542,14 +542,163 @@ async function btInfo(d) {
 /* ---------------- Rede (catálogo) ---------------- */
 function viewRede() {
   const sec = CAT.sections.find((s) => s.id === "rede");
-  if (!sec) { $("#view").innerHTML = `<div class="empty">vazio</div>`; return; }
-  $("#view").innerHTML = `<div class="menu" id="redeMenu">` + sec.actions.map((a) =>
-    `<div class="item" data-a="${esc(a.id)}">
-      <div class="it-main"><div class="it-t">${esc(a.nome)}</div>
-        <div class="it-s">${esc(a.desc || "")}</div></div><div class="chev">›</div>
-    </div>`).join("") + `</div><div id="actBox"></div>`;
-  $("#redeMenu").querySelectorAll(".item").forEach((it) =>
-    it.onclick = () => openAction(sec.actions.find((a) => a.id === it.dataset.a)));
+  $("#view").innerHTML =
+    `<div class="card" style="margin-bottom:10px">
+      <h3>🔎 Scan de Rede completo</h3>
+      <div class="muted" style="margin-bottom:8px">Descoberta + portas (incl. câmera/DVR/IoT) + análise condicional (SMB/DNS/web), por estágio.</div>
+      <button class="btn" id="btnNetScan">Iniciar scan de rede</button>
+    </div>` +
+    (sec ? `<div class="menu" id="redeMenu">` + sec.actions.map((a) =>
+      `<div class="item" data-a="${esc(a.id)}">
+        <div class="it-main"><div class="it-t">${esc(a.nome)}</div>
+          <div class="it-s">${esc(a.desc || "")}</div></div><div class="chev">›</div>
+      </div>`).join("") + `</div><div id="actBox"></div>` : "");
+  if (sec) {
+    $("#redeMenu").querySelectorAll(".item").forEach((it) =>
+      it.onclick = () => openAction(sec.actions.find((a) => a.id === it.dataset.a)));
+  }
+  $("#btnNetScan").onclick = viewNetScanSetup;
+}
+
+function _subnetGuess() {
+  const cur = IFACES.find((i) => i.nome === IFACE) || IFACES[0];
+  if (!cur || !cur.ip || cur.ip === "-") return { target: "10.6.1.0/24", iface: (cur && cur.nome) || IFACE };
+  const m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)\/(\d+)$/.exec(cur.ip);
+  if (!m) return { target: "10.6.1.0/24", iface: cur.nome };
+  return { target: `${m[1]}.${m[2]}.${m[3]}.0/${m[5]}`, iface: cur.nome };
+}
+
+function viewNetScanSetup() {
+  const g = _subnetGuess();
+  $("#view").innerHTML = `
+    <div class="card">
+      <h3>🔎 Scan de Rede completo</h3>
+      <div class="warn">⚠️ Só nas suas redes. Vuln scan manual é separado e pode derrubar IoT frágil.</div>
+      ${ifaceBar()}
+      <label>Faixa alvo</label>
+      <input id="netTarget" value="${esc(g.target)}" placeholder="10.6.1.0/24">
+      <button class="btn" id="btnNetGo" style="margin-top:8px">Rodar scan</button>
+    </div>
+    <div id="netScanBox"></div>`;
+  bindIface();
+  $("#btnNetGo").onclick = startNetScan;
+}
+
+async function startNetScan() {
+  const target = ($("#netTarget") || {}).value || "";
+  if (!target) { toast("informe a faixa (ex: 10.6.1.0/24)"); return; }
+  const r = await post("/api/scan/network/start", { target, iface: IFACE });
+  if (!r.ok) { toast(r.error || "falha ao iniciar"); return; }
+  _netScanId = r.scan_id;
+  renderNetScanProgress();
+  pollNetScan();
+}
+
+let _netScanId = null;
+const NET_STAGE_LABELS = {
+  iniciando: "iniciando…", discovery: "descoberta (arp-scan)", ports: "varrendo portas",
+  deepdive: "análise condicional (SMB/DNS/web)", done: "completo", error: "erro",
+};
+
+function renderNetScanProgress() {
+  $("#netScanBox").innerHTML = `
+    <div class="card" id="netScanCard" style="margin-top:10px">
+      <div class="wps-head"><h3>Scan em andamento</h3><span class="wps-badge wps-run" id="netScanBadge">🔄 rodando</span></div>
+      <div class="kv"><span class="k">Estágio</span><span class="v" id="netStage">iniciando…</span></div>
+      <div class="kv"><span class="k">Hosts encontrados</span><span class="v" id="netHosts">0</span></div>
+      <div class="kv"><span class="k">Host atual</span><span class="v" id="netCur">-</span></div>
+      <div class="wps-bar" id="netBar"><div style="width:0%"></div></div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn danger" id="btnNetCancel">⏹ Cancelar</button>
+      </div>
+    </div>
+    <div id="netResultBox"></div>`;
+  $("#btnNetCancel").onclick = async () => {
+    await post("/api/scan/network/cancel", {});
+    toast("cancelando…");
+  };
+}
+
+async function pollNetScan() {
+  if (!_netScanId) return;
+  const r = await api("/api/scan/network/status?scan_id=" + _netScanId);
+  if (!r.ok) { setTimeout(pollNetScan, 2000); return; }
+  const stageEl = $("#netStage"), hostsEl = $("#netHosts"), curEl = $("#netCur"), barEl = $("#netBar");
+  if (stageEl) stageEl.textContent = NET_STAGE_LABELS[r.stage] || r.stage || "-";
+  if (hostsEl) hostsEl.textContent = r.hosts_found || 0;
+  if (curEl) curEl.textContent = r.current_host || "-";
+  if (barEl) barEl.firstElementChild.style.width = (r.progress || 0) + "%";
+
+  if (r.stage === "done" || (!r.running && r.stage !== "iniciando")) {
+    const badge = $("#netScanBadge");
+    if (badge) { badge.className = "wps-badge wps-done"; badge.textContent = r.stage === "done" ? "✅ completo" : "⏹ parado"; }
+    const cancelBtn = $("#btnNetCancel"); if (cancelBtn) cancelBtn.style.display = "none";
+    if (r.stage === "done") { toast(r.message || "scan completo"); renderNetScanResult(); }
+    return;
+  }
+  setTimeout(pollNetScan, 2000);
+}
+
+async function renderNetScanResult() {
+  const r = await api("/api/scan/network/result?scan_id=" + _netScanId);
+  if (!r.ok) return;
+  const hosts = r.hosts || [];
+  $("#netResultBox").innerHTML = `
+    <div class="card" style="margin-top:10px">
+      <h3>Panorama — ${hosts.length} hosts</h3>
+      <div class="menu" id="netHostMenu">${hosts.map((h, i) => `
+        <div class="item" data-i="${i}">
+          <div class="it-main">
+            <div class="it-t">${esc(h.ip)} ${h.guess ? `<span class="tag">${esc(h.guess)}</span>` : ""}</div>
+            <div class="it-s">${esc(h.vendor || "")} ${h.mac ? "· " + esc(h.mac) : ""} · portas: ${(h.open_ports || []).join(", ") || "-"}</div>
+          </div><div class="chev">›</div>
+        </div>`).join("")}</div>
+    </div>
+    <div id="hostDetailBox"></div>`;
+  $("#netHostMenu").querySelectorAll(".item").forEach((it) =>
+    it.onclick = () => renderHostDetail(hosts[Number(it.dataset.i)]));
+}
+
+function renderHostDetail(h) {
+  const dd = h.deepdive || {};
+  $("#hostDetailBox").innerHTML = `
+    <div class="card" style="margin-top:10px">
+      <h3>${esc(h.ip)}</h3>
+      <div class="kv"><span class="k">Fabricante</span><span class="v">${esc(h.vendor || "-")}</span></div>
+      <div class="kv"><span class="k">MAC</span><span class="v">${esc(h.mac || "-")}</span></div>
+      <div class="kv"><span class="k">Portas</span><span class="v">${(h.open_ports || []).join(", ") || "-"}</span></div>
+      ${Object.keys(dd).length ? Object.entries(dd).map(([k, v]) =>
+        `<div class="wps-loghead" style="margin-top:8px">${esc(k)}</div><pre style="max-height:200px;overflow:auto;font-size:11px">${esc(v)}</pre>`).join("") : ""}
+      <div class="warn" style="margin-top:8px">⚠️ Vuln scan pode derrubar câmera/DVR frágil. Só rode manualmente se precisar.</div>
+      <button class="btn danger" id="btnVulnHost">Rodar vuln scan nesse host</button>
+      <div id="vulnBox"></div>
+    </div>`;
+  $("#btnVulnHost").onclick = () => startVulnScan(h);
+}
+
+let _vulnId = null;
+async function startVulnScan(h) {
+  const ports = (h.open_ports || []).join(",");
+  const r = await post("/api/scan/vuln/start", { ip: h.ip, ports });
+  if (!r.ok) { toast(r.error || "falha ao iniciar vuln scan"); return; }
+  _vulnId = r.vuln_id;
+  $("#vulnBox").innerHTML = `<div class="muted" id="vulnStatus" style="margin-top:8px">rodando nmap --script vuln…</div>`;
+  pollVulnScan();
+}
+
+async function pollVulnScan() {
+  if (!_vulnId) return;
+  const r = await api("/api/scan/vuln/status?vuln_id=" + _vulnId);
+  const st = $("#vulnStatus");
+  if (!r.ok) { setTimeout(pollVulnScan, 2000); return; }
+  if (st) st.textContent = r.message || "rodando…";
+  if (r.stage === "done" || !r.running) {
+    const res = await api("/api/scan/vuln/result?vuln_id=" + _vulnId);
+    if (st) st.outerHTML = `<pre style="margin-top:8px;max-height:260px;overflow:auto;font-size:11px">${esc((res.output || "sem saída"))}</pre>`;
+    toast("vuln scan completo");
+    return;
+  }
+  setTimeout(pollVulnScan, 2500);
 }
 function openAction(a) {
   $("#actBox").innerHTML = `<div class="card"><h3>${esc(a.nome)}</h3>
