@@ -128,6 +128,7 @@ function go(sec) {
   $("#tabs").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.sec === sec));
   if (capTimer) { clearInterval(capTimer); capTimer = null; } if (feedTimer) { clearInterval(feedTimer); feedTimer = null; }
   if (capturing) { capturing = false; post("/api/wifi/capture/stop").catch(() => {}); }  // nao deixa a placa presa
+  if (_netPollTimer) { clearTimeout(_netPollTimer); _netPollTimer = null; }
   ({ wifi: viewWifi, bt: viewBt, rede: viewRede, files: viewFiles, sistema: viewSystem, logs: viewLogs, config: viewConfig }[sec] || viewWifi)();
 }
 
@@ -600,7 +601,14 @@ const NET_STAGE_LABELS = {
   deepdive: "análise condicional (SMB/DNS/web)", done: "completo", error: "erro",
 };
 
+let _netSelectedIp = null;
+let _netPollTimer = null;
+let _netLastHosts = [];
+let _vulnId = null;
+
 function renderNetScanProgress() {
+  _netSelectedIp = null;
+  _vulnId = null;
   $("#netScanBox").innerHTML = `
     <div class="card" id="netScanCard" style="margin-top:10px">
       <div class="wps-head"><h3>Scan em andamento</h3><span class="wps-badge wps-run" id="netScanBadge">🔄 rodando</span></div>
@@ -612,17 +620,58 @@ function renderNetScanProgress() {
         <button class="btn danger" id="btnNetCancel">⏹ Cancelar</button>
       </div>
     </div>
-    <div id="netResultBox"></div>`;
+    <div class="card" style="margin-top:10px">
+      <h3>Hosts <span class="muted" id="netHostCount"></span></h3>
+      <div class="menu" id="netHostMenu"><div class="empty">procurando…</div></div>
+    </div>
+    <div id="hostDetailBox"></div>`;
   $("#btnNetCancel").onclick = async () => {
     await post("/api/scan/network/cancel", {});
     toast("cancelando…");
   };
 }
 
+function _hostStateLabel(h, status) {
+  if (h.guess && h.guess !== "aguardando varredura de portas...") {
+    if (status.stage === "deepdive" && status.current_host === h.ip) return "🔎 analisando…";
+    return h.guess;
+  }
+  if (status.stage === "discovery" || (status.stage === "ports" && !h.open_ports)) return "⏳ aguardando portas…";
+  return "⏳ varrendo portas…";
+}
+
+function renderNetHostList(hosts, status) {
+  _netLastHosts = hosts;
+  const countEl = $("#netHostCount");
+  if (countEl) countEl.textContent = hosts.length ? `(${hosts.length})` : "";
+  const menu = $("#netHostMenu");
+  if (!menu) return;
+  if (!hosts.length) { menu.innerHTML = `<div class="empty">procurando…</div>`; return; }
+  menu.innerHTML = hosts.map((h, i) => {
+    const isCur = status.current_host === h.ip && status.stage !== "done";
+    return `<div class="item ${h.ip === _netSelectedIp ? "mine" : ""}" data-ip="${esc(h.ip)}">
+      <div class="it-main">
+        <div class="it-t">${isCur ? "🔄 " : ""}${esc(h.ip)}</div>
+        <div class="it-s">${esc(_hostStateLabel(h, status))} ${h.vendor ? "· " + esc(h.vendor) : ""} ${(h.open_ports || []).length ? "· portas: " + h.open_ports.join(", ") : ""}</div>
+      </div><div class="chev">›</div>
+    </div>`;
+  }).join("");
+  menu.querySelectorAll(".item").forEach((it) =>
+    it.onclick = () => { _netSelectedIp = it.dataset.ip; _vulnId = null; renderHostDetail(hosts.find((h) => h.ip === it.dataset.ip)); });
+  if (_netSelectedIp && !_vulnId) {
+    const h = hosts.find((x) => x.ip === _netSelectedIp);
+    if (h) renderHostDetail(h); // mantem o painel aberto atualizado (ex: deep-dive chegando), mas nao por cima de um vuln scan rodando
+  }
+}
+
 async function pollNetScan() {
   if (!_netScanId) return;
-  const r = await api("/api/scan/network/status?scan_id=" + _netScanId);
-  if (!r.ok) { setTimeout(pollNetScan, 2000); return; }
+  const [r, res] = await Promise.all([
+    api("/api/scan/network/status?scan_id=" + _netScanId),
+    api("/api/scan/network/result?scan_id=" + _netScanId),
+  ]);
+  if (res.ok) renderNetHostList(res.hosts || [], r.ok ? r : {});
+  if (!r.ok) { _netPollTimer = setTimeout(pollNetScan, 2000); return; }
   const stageEl = $("#netStage"), hostsEl = $("#netHosts"), curEl = $("#netCur"), barEl = $("#netBar");
   if (stageEl) stageEl.textContent = NET_STAGE_LABELS[r.stage] || r.stage || "-";
   if (hostsEl) hostsEl.textContent = r.hosts_found || 0;
@@ -633,33 +682,14 @@ async function pollNetScan() {
     const badge = $("#netScanBadge");
     if (badge) { badge.className = "wps-badge wps-done"; badge.textContent = r.stage === "done" ? "✅ completo" : "⏹ parado"; }
     const cancelBtn = $("#btnNetCancel"); if (cancelBtn) cancelBtn.style.display = "none";
-    if (r.stage === "done") { toast(r.message || "scan completo"); renderNetScanResult(); }
+    if (r.stage === "done") toast(r.message || "scan completo");
     return;
   }
-  setTimeout(pollNetScan, 2000);
-}
-
-async function renderNetScanResult() {
-  const r = await api("/api/scan/network/result?scan_id=" + _netScanId);
-  if (!r.ok) return;
-  const hosts = r.hosts || [];
-  $("#netResultBox").innerHTML = `
-    <div class="card" style="margin-top:10px">
-      <h3>Panorama — ${hosts.length} hosts</h3>
-      <div class="menu" id="netHostMenu">${hosts.map((h, i) => `
-        <div class="item" data-i="${i}">
-          <div class="it-main">
-            <div class="it-t">${esc(h.ip)} ${h.guess ? `<span class="tag">${esc(h.guess)}</span>` : ""}</div>
-            <div class="it-s">${esc(h.vendor || "")} ${h.mac ? "· " + esc(h.mac) : ""} · portas: ${(h.open_ports || []).join(", ") || "-"}</div>
-          </div><div class="chev">›</div>
-        </div>`).join("")}</div>
-    </div>
-    <div id="hostDetailBox"></div>`;
-  $("#netHostMenu").querySelectorAll(".item").forEach((it) =>
-    it.onclick = () => renderHostDetail(hosts[Number(it.dataset.i)]));
+  _netPollTimer = setTimeout(pollNetScan, 1500);
 }
 
 function renderHostDetail(h) {
+  if (!h) return;
   const dd = h.deepdive || {};
   $("#hostDetailBox").innerHTML = `
     <div class="card" style="margin-top:10px">
@@ -676,7 +706,6 @@ function renderHostDetail(h) {
   $("#btnVulnHost").onclick = () => startVulnScan(h);
 }
 
-let _vulnId = null;
 async function startVulnScan(h) {
   const ports = (h.open_ports || []).join(",");
   const r = await post("/api/scan/vuln/start", { ip: h.ip, ports });

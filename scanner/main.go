@@ -156,6 +156,10 @@ func main() {
 		writeStatus(Status{Stage: "error", Message: err.Error()})
 	}
 	res.Hosts = hosts
+	for _, h := range hosts {
+		h.Guess = "aguardando varredura de portas..."
+	}
+	saveResult(res, *out) // grava logo a lista de hosts (sem portas ainda) pra UI mostrar ja
 	writeStatus(Status{Stage: "discovery", Progress: 10, HostsFound: len(hosts), Message: fmt.Sprintf("%d hosts encontrados", len(hosts))})
 
 	if len(hosts) == 0 {
@@ -172,6 +176,10 @@ func main() {
 		writeStatus(Status{Stage: "ports", Progress: pct, HostsFound: len(hosts), CurrentHost: cur,
 			Message: fmt.Sprintf("varrendo portas (%d/%d hosts)", doneHosts, totalHosts)})
 	})
+	for _, h := range hosts {
+		h.Guess = guessDevice(h) // palpite preliminar so com as portas, antes do deep-dive
+	}
+	saveResult(res, *out) // grava com as portas ja descobertas, antes do deep-dive (que e lento)
 
 	// estagio 3: deep-dive condicional
 	totalHosts := len(hosts)
@@ -181,6 +189,7 @@ func main() {
 			Message: "analisando " + h.IP})
 		deepDive(h)
 		h.Guess = guessDevice(h)
+		saveResult(res, *out) // atualiza incrementalmente, host por host, pra UI acompanhar ao vivo
 	}
 
 	res.FinishedAt = time.Now().Format(time.RFC3339)
