@@ -375,13 +375,14 @@ def _run_catalog_action(action_id, fields):
     for k, v in fields.items():
         safe = "".join(c for c in str(v) if c.isalnum() or c in ".-_/: ")
         cmd = cmd.replace("{" + k + "}", safe)
+    t = int(action.get("timeout") or 120)
     try:
         out = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, timeout=120
+            cmd, shell=True, capture_output=True, text=True, timeout=t
         )
         return {"ok": True, "stdout": out.stdout, "stderr": out.stderr, "rc": out.returncode}
     except subprocess.TimeoutExpired:
-        return {"ok": False, "error": "timeout (120s)"}
+        return {"ok": False, "error": f"timeout ({t}s)"}
 
 
 if __name__ == "__main__":

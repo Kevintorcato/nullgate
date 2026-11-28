@@ -1,6 +1,6 @@
 {
   "app": "Nullgate",
-  "version": "0.9.17",
+  "version": "0.9.18",
   "sections": [
     {
       "id": "wifi",
@@ -55,6 +55,16 @@
           "cmd": "nmap -p 5555 --open -T4 {alvo}",
           "campos": [
             {"nome": "alvo", "label": "Faixa da rede", "placeholder": "10.6.1.0/24"}
+          ]
+        },
+        {
+          "id": "scan_completo",
+          "nome": "Scan completo (rapido)",
+          "desc": "Descobre hosts, portas abertas (top 1000), servico e chute de SO - so dos que responderam",
+          "cmd": "nmap -T4 --min-rate 500 -sV --version-intensity 2 -O --osscan-guess --open {alvo}",
+          "timeout": 300,
+          "campos": [
+            {"nome": "alvo", "label": "Faixa ou IP", "placeholder": "10.6.1.0/24"}
           ]
         }
       ]
